@@ -1,4 +1,8 @@
-"""Turn raw candles into model inputs. Every feature only uses data up to that candle."""
+"""Turn raw candles into model inputs. Every feature only uses data up to that candle.
+
+`build` describes one coin's own chart. `build_all` adds market context: what BTC is doing and how
+each coin is performing against BTC and the other tracked coins.
+"""
 import numpy as np
 import pandas as pd
 
@@ -44,7 +48,39 @@ def build(df):
     f["range_pos"] = (c - l.rolling(20).min()) / (h.rolling(20).max() - l.rolling(20).min())
     f["candle_body"] = (c - df["open"]) / (h - l).replace(0, np.nan)
 
+    # Longer-term trend and position.
+    for n in (50, 100):
+        f[f"ret_{n}"] = c.pct_change(n)
+    f["from_high_100"] = c / h.rolling(100).max() - 1
+    f["ema50_slope"] = c.ewm(span=50).mean().pct_change(10)
+
+    f["dow"] = df.index.dayofweek
+    f["hour"] = df.index.hour
+
     return f.replace([np.inf, -np.inf], np.nan)
+
+
+MARKET = "BTC/USDT"
+MARKET_COLS = ["ret_1", "ret_6", "ret_24", "dist_ema50", "dist_ema200", "vol_50", "rsi_14"]
+
+
+def build_all(raw):
+    """Features for every coin in `raw` ({symbol: candles}), including market context.
+
+    `raw` must contain BTC/USDT, and all coins should cover the same recent period.
+    """
+    own = {s: build(df) for s, df in raw.items()}
+    btc = own[MARKET][MARKET_COLS].add_prefix("btc_")
+    rank = pd.DataFrame({s: df["close"].pct_change(24) for s, df in raw.items()}).rank(axis=1, pct=True)
+
+    out = {}
+    for s, f in own.items():
+        f = f.join(btc)
+        f["rel_btc_24"] = f["ret_24"] - f["btc_ret_24"]
+        f["rel_btc_6"] = f["ret_6"] - f["btc_ret_6"]
+        f["xs_rank_24"] = rank[s]
+        out[s] = f
+    return out
 
 
 def target(df, horizon):

@@ -70,6 +70,14 @@ def drop_open_candle(df, timeframe):
     return df
 
 
+def closed(timeframe, refresh=True, symbols=config.SYMBOLS):
+    """Closed candles for every symbol, as {symbol: DataFrame}."""
+    return {
+        s: drop_open_candle(update(s, timeframe) if refresh else load_cached(s, timeframe), timeframe)
+        for s in symbols
+    }
+
+
 def prices(symbols):
     """Latest prices for a list of symbols."""
     tickers = exchange().fetch_tickers(symbols)

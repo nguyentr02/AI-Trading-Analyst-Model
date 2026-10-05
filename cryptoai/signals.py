@@ -16,11 +16,11 @@ def current(timeframe, refresh=True):
     bundle = model.load(timeframe)
     if bundle is None:
         raise RuntimeError(f"No {timeframe} model yet. Run: python -m cryptoai train")
+    raw = {s: df.iloc[-400:] for s, df in data.closed(timeframe, refresh).items()}
+    probs = model.predict_history(raw, timeframe)
     rows = []
-    for sym in config.SYMBOLS:
-        df = data.update(sym, timeframe) if refresh else data.load_cached(sym, timeframe)
-        df = data.drop_open_candle(df, timeframe)
-        prob = model.predict_history(df.iloc[-400:], timeframe).iloc[-1]
+    for sym, df in raw.items():
+        prob = probs[sym].loc[df.index[-1]]
         rows.append(
             {
                 "symbol": sym,

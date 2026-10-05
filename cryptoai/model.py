@@ -30,13 +30,13 @@ def _new_model():
 
 def dataset(timeframe, refresh=True):
     """Features + target for every symbol, stacked into one frame."""
+    raw = data.closed(timeframe, refresh)
+    feats = features.build_all(raw)
     frames = []
-    for sym in config.SYMBOLS:
-        df = data.update(sym, timeframe) if refresh else data.load_cached(sym, timeframe)
-        df = data.drop_open_candle(df, timeframe)
+    for sym, df in raw.items():
         if len(df) < 300:
             continue
-        X = features.build(df)
+        X = feats[sym]
         X["y"] = features.target(df, config.HORIZON[timeframe])
         X["fwd_ret_1"] = df["close"].pct_change().shift(-1)  # next-candle return, for backtests
         X["symbol"] = sym
@@ -110,10 +110,16 @@ def load_oos(timeframe):
     return pd.read_csv(path, parse_dates=["time"], index_col="time")
 
 
-def predict_history(df, timeframe):
-    """P(up) for every closed candle in df (in-sample for the past, so use only for display)."""
+def predict_history(raw, timeframe):
+    """P(up) per closed candle for each coin in `raw` ({symbol: candles}, must include BTC/USDT).
+
+    Returns a DataFrame with one column per symbol. Past values are in-sample, so use them only for display.
+    """
     bundle = load(timeframe)
     if bundle is None:
         return None
-    X = features.build(df)[bundle["features"]]
-    return pd.Series(bundle["model"].predict_proba(X)[:, 1], index=X.index)
+    probs = {}
+    for sym, X in features.build_all(raw).items():
+        X = X[bundle["features"]]
+        probs[sym] = pd.Series(bundle["model"].predict_proba(X)[:, 1], index=X.index)
+    return pd.DataFrame(probs)

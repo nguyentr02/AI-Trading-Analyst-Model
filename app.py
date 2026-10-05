@@ -188,7 +188,8 @@ def page_chart():
     df = get_candles(sym, tf)
     lookback = st.slider("Candles shown", 60, 1000, 240, step=20)
     view = df.iloc[-lookback:]
-    prob = model.predict_history(df.iloc[-(lookback + 250):], tf).reindex(view.index)
+    raw = {s: get_candles(s, tf).iloc[-(lookback + 250):] for s in config.SYMBOLS}
+    prob = model.predict_history(raw, tf)[sym].reindex(view.index)
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28], vertical_spacing=0.04,
                         subplot_titles=(f"{sym} · {tf}", "Model P(up)"))

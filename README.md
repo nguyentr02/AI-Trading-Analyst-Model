@@ -30,7 +30,9 @@ Command line: `.venv\Scripts\python -m cryptoai [train|signals|backtest]`
 ## How it works
 
 - `cryptoai/data.py`: public Binance OHLCV through ccxt, cached in `data/`. No API key needed.
-- `cryptoai/features.py`: about 25 indicators (returns, RSI, MACD, EMA distance, Bollinger, ATR, volatility, volume).
+- `cryptoai/features.py`: about 40 inputs. Each coin's own chart (returns, RSI, MACD, EMA distance, Bollinger,
+  ATR, volatility, volume, long-term trend, distance from recent high, day and hour) plus market context:
+  what BTC is doing, and each coin's strength against BTC and the other tracked coins.
 - `cryptoai/model.py`: gradient-boosted trees, one model per timeframe, trained on all coins pooled.
   Evaluated **walk-forward**: each test period is predicted by a model trained only on earlier data.
 - `cryptoai/backtest.py`: long-or-flat with 0.1% fee per side, compared with buy and hold.
@@ -38,7 +40,7 @@ Command line: `.venv\Scripts\python -m cryptoai [train|signals|backtest]`
 
 ## Read this before trusting it
 
-Out-of-sample accuracy is about 51–52% (AUC about 0.52–0.53). That is a small edge, which is normal
+Out-of-sample accuracy is about 52% (AUC about 0.53). That is a small edge, which is normal
 for honest price prediction. Anyone who shows you 70%+ is usually leaking future data into the test.
 Backtest results differ a lot between coins and are partly luck. Treat signals as one input,
 and never risk money you can't afford to lose.
