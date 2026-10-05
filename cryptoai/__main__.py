@@ -1,4 +1,4 @@
-"""Command line: python -m cryptoai [train|signals|backtest|market|daily|live|simulate]"""
+"""Command line: python -m cryptoai --help lists every command (train, signals, advice, live, simulate, ...)."""
 import argparse
 
 from . import backtest, config, market, model, signals
@@ -13,11 +13,18 @@ def main():
     sub.add_parser("market", help="print live price, volume and market cap")
     sub.add_parser("daily", help="daily learning: fetch new candles, retrain, keep the better model, log signals")
     sub.add_parser("live", help="always-on service: learn and signal at every candle close, catch up after downtime")
+    sub.add_parser("advice", help="buy / sell / hold advice for your saved portfolio")
+    sub.add_parser("notify-test", help="send a test alert to Windows and Zalo")
+    zs = sub.add_parser("zalo-setup", help="connect your Zalo bot (message the bot from Zalo first)")
+    zs.add_argument("token", help="bot token from bot.zaloplatforms.com")
     sim = sub.add_parser("simulate", help="paper-trade a coin over a past period from a starting balance")
     sim.add_argument("symbol", help="e.g. BNB/USDT")
     sim.add_argument("start", help="first day, e.g. 2026-01-01")
     sim.add_argument("end", help="day after the last day, e.g. 2026-06-01")
     sim.add_argument("--cash", type=float, default=1000.0, help="starting balance in USDT (default 1000)")
+    sim.add_argument("--stop", choices=["fixed", "trailing"], help="add a stop-loss: fixed (from the buy price) "
+                     "or trailing (from the highest close since buying)")
+    sim.add_argument("--stop-pct", type=float, default=0.10, help="stop-loss distance, e.g. 0.10 = 10%% (default)")
     args = ap.parse_args()
 
     if args.cmd == "train":
@@ -26,18 +33,53 @@ def main():
             for k, v in model.train(name).items():
                 print(f"  {k}: {v}")
 
+    elif args.cmd == "advice":
+        from . import advisor
+
+        advice = advisor.current(refresh=True)
+        for r in advice.itertuples():
+            amount = f"  ~${r.amount_usdt:,.0f}" if r.action in ("BUY", "SELL") else ""
+            print(f"{r.action:<12}{r.symbol:<10}{amount}")
+            print(f"            {r.reason}")
+            if isinstance(r.timing, str):
+                print(f"            Timing: {r.timing}")
+
+    elif args.cmd == "notify-test":
+        from . import notify
+
+        for channel, result in notify.send("Crypto AI: test alert", "If you can read this, alerts work.").items():
+            print(f"{channel}: {result}")
+
+    elif args.cmd == "zalo-setup":
+        from . import notify
+
+        chat_id, name = notify.zalo_find_chat_id(args.token)
+        if not chat_id:
+            print("No messages found. Open your bot in Zalo, send it any message (e.g. 'hi'), then run this again.")
+            return
+        s = notify.settings()
+        s["zalo"] = {"token": args.token, "chat_id": chat_id}
+        notify.save_settings(s)
+        notify.zalo_send(args.token, chat_id, "Crypto AI is connected. You'll get buy/sell alerts here.")
+        print(f"Connected to {name or chat_id}. A confirmation message was sent to your Zalo.")
+
     elif args.cmd == "simulate":
         from . import simulate
 
-        summary, trades, equity = simulate.simulate(args.symbol, args.start, args.end, cash=args.cash)
+        stop = {"type": args.stop, "pct": args.stop_pct} if args.stop else None
+        summary, trades, equity = simulate.simulate(args.symbol, args.start, args.end, cash=args.cash, stop=stop)
         out = config.ROOT / "reports"
         out.mkdir(exist_ok=True)
         tag = f"{args.symbol.replace('/', '_')}_{args.start}_{args.end}"
+        if stop:
+            tag += f"_{args.stop}{args.stop_pct:.0%}".replace("%", "pct")
+        stop_text = f", {args.stop} stop-loss at {args.stop_pct:.0%}" if stop else ""
         print(f"\n{args.symbol} {args.start} to {args.end}, starting with ${args.cash:,.2f}, "
-              f"fee {config.FEE:.2%} per trade\n")
+              f"fee {config.FEE:.2%} per trade{stop_text}\n")
         for name, r in summary.iterrows():
+            stops = f"   {int(r['stops hit'])} stopped out" if stop and name != "Buy & hold" else ""
             print(f"  {name:<28} ${r['final balance']:>9,.2f}  {r['return']:+7.1%}   worst drop {r['worst drop']:+6.1%}"
-                  f"   {int(r['trades']):>3} trades   win rate {r['win rate']:>4.0%}   fees ${r['fees paid']:,.2f}")
+                  f"   {int(r['trades']):>3} trades   win rate {r['win rate']:>4.0%}   fees ${r['fees paid']:,.2f}{stops}")
         for name, t in trades.items():
             t.to_csv(out / f"{tag}_{name.split(' (')[0].replace(' ', '_').lower()}_trades.csv", index=False)
         equity.to_csv(out / f"{tag}_balance.csv")

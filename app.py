@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from cryptoai import backtest, config, data, live, market, model, portfolio, signals
+from cryptoai import advisor, backtest, config, data, live, market, model, notify, portfolio, signals
 
 ASSETS = config.ROOT / "assets"
 st.set_page_config(page_title="Crypto AI", page_icon=str(ASSETS / "icon.svg"), layout="wide")
@@ -615,17 +615,78 @@ def retrain_button():
 
 
 # ---------------- portfolio ----------------
+ACTION_STYLE = {  # badge color and icon for each kind of advice
+    "BUY": ("green", ":material/add_shopping_cart:"),
+    "SELL": ("red", ":material/sell:"),
+    "HOLD": ("blue", ":material/pause_circle:"),
+    "WAIT": ("gray", ":material/schedule:"),
+    "NOT TRACKED": ("gray", ":material/help:"),
+}
+
+
+@st.cache_data(ttl=60, max_entries=4, show_spinner="Working out the advice…")
+def get_advice(versions, portfolio_mtime):
+    """Advice for the saved portfolio. Recomputed when a model retrains or the portfolio is saved."""
+    return advisor.current(refresh=False)
+
+
+def advice_section():
+    st.subheader("AI advice", icon=":material/tips_and_updates:")
+    versions = tuple(model_version(n) for n in (advisor.DIRECTION, advisor.TIMING))
+    if None in versions:
+        st.caption("The advice appears once the models are trained.")
+        return
+    mtime = config.PORTFOLIO_FILE.stat().st_mtime if config.PORTFOLIO_FILE.exists() else 0
+    advice = get_advice(versions, mtime)
+
+    act = advice[advice["action"].isin(["BUY", "SELL"])]
+    if len(act):
+        cols = st.columns(min(len(act), 4), gap="medium")
+        for col, r in zip(cols * 2, act.itertuples()):
+            color, icon = ACTION_STYLE[r.action]
+            tick = coin(r.symbol)
+            with col.container(border=True):
+                st.badge(f"{r.action.title()} {tick}", icon=icon, color=color)
+                st.metric("Suggested amount", f"${r.amount_usdt:,.0f}", f"about {r.amount_coin:.4f} {tick}",
+                          delta_color="off", delta_arrow="off")
+                st.caption(r.reason)
+                if isinstance(r.timing, str):
+                    st.caption(f":material/schedule: {r.timing}")
+    else:
+        st.caption("No buying or selling suggested right now.")
+
+    rest = advice[~advice["action"].isin(["BUY", "SELL"])]
+    with st.container(border=True):
+        for r in rest.itertuples():
+            color, icon = ACTION_STYLE[r.action]
+            line = st.container(horizontal=True, vertical_alignment="center", gap="small")
+            line.badge(f"{r.action.title()} {coin(r.symbol)}", icon=icon, color=color)
+            line.caption(r.reason, width="content")
+
+    s = notify.settings()
+    channels = [c for c, on in (("Windows notifications", s.get("windows")), ("Zalo", s.get("zalo"))) if on]
+    st.caption(
+        "Rules: sell when the next-1-day P(up) is at or below "
+        f"{config.EXIT_PROB:.0%}, buy at or above {config.ENTER_PROB:.0%}; next 4 hours is only a timing hint. "
+        f"Buys split your spare cash equally, at most {config.MAX_PER_COIN:.0%} of the portfolio per coin. "
+        + (f"Alerts on changes: {', '.join(channels)}." if channels else "Alerts are off.")
+        + " Estimates with a small edge, not financial advice.")
+
+
 def page_portfolio():
     st.title("Portfolio")
     holdings = portfolio.load()
+    advice_section()
     if holdings:
         portfolio_overview(holdings)
     else:
         with st.container(border=True):
             st.markdown("**No holdings yet**")
-            st.caption("Add what you own below to see its value, profit or loss, and the AI's signals for it.")
+            st.caption("Add what you own and your spare cash below, to get advice for your own portfolio.")
 
-    with st.expander("Edit holdings", icon=":material/edit:", expanded=not holdings):
+    with st.expander("Edit holdings and cash", icon=":material/edit:", expanded=not holdings):
+        cash = st.number_input("Spare cash (USDT)", min_value=0.0, value=float(portfolio.load_cash()), step=50.0,
+                               help="Money available for buying. The AI uses it to suggest buy amounts.")
         edited = st.data_editor(
             pd.DataFrame(holdings, columns=["symbol", "amount", "avg_cost"]),
             num_rows="dynamic", width="stretch", key="holdings_editor",
@@ -637,9 +698,9 @@ def page_portfolio():
                                                           required=True),
             },
         )
-        if st.button("Save holdings", icon=":material/save:", type="primary"):
-            portfolio.save(edited.dropna().to_dict("records"))
-            st.toast("Holdings saved", icon=":material/check:")
+        if st.button("Save", icon=":material/save:", type="primary"):
+            portfolio.save(edited.dropna().to_dict("records"), cash=cash)
+            st.toast("Saved", icon=":material/check:")
             st.rerun()
         st.caption("Saved only on this computer, in portfolio.json.")
 

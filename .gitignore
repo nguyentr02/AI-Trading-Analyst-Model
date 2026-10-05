@@ -8,3 +8,4 @@ signals_log.csv
 signals_output.txt
 logs/
 reports/
+notify.json

@@ -100,7 +100,7 @@ Firewall may ask whether to allow Python; allow it on private networks.
 | **Signals** | The AI's current call for each coin, and a log of recent signal changes. The badge at the top shows whether the live learning service is running |
 | **Chart** | Candlestick chart with the model's P(up) underneath |
 | **Backtest** | How the strategy would have done on data the model had not seen, model accuracy, **Learning history**, and a **Retrain models** button |
-| **Portfolio** | Enter your holdings (symbol like `BTC/USDT`, amount, average cost) to see value, profit/loss and the AI's signal for each |
+| **Portfolio** | AI advice (buy / sell / hold, with amounts) for your holdings and spare cash, plus value, profit/loss and allocation |
 
 Use the **Prediction** switch (Next 4 hours, Next 1 day, Next 3 days) at the top of Signals, Chart and Backtest.
 
@@ -141,6 +141,41 @@ The live service stays connected to Binance. Each time a candle closes it:
 
 If the PC was off or the internet was down, it downloads everything it missed when it comes back and learns
 from it before continuing. Nothing is skipped.
+
+### Advice for your portfolio
+
+On the **Portfolio** page, open **Edit holdings and cash**, enter what you own (coin pair, amount, average
+cost) and your **spare cash** in USDT, and press **Save**. The **AI advice** section then tells you, per coin:
+
+| Advice | When |
+|---|---|
+| **Sell** (all of it) | You hold the coin and its next-1-day P(up) is 48% or less |
+| **Hold** | You hold the coin and there is no sell signal |
+| **Buy** (with a suggested amount) | You don't hold the coin and its next-1-day P(up) is 55% or more |
+| **Wait** | No signal, or not enough spare cash |
+
+Suggested buy amounts split your spare cash (plus what suggested sells would free up) equally across the
+coins to buy, keeping any one coin to at most 30% of your portfolio. The next-4-hours signal adds a timing
+hint, such as "a dip is likely in the next 4 hours; buying a few hours later may get a better price".
+These are the same rules tested in the backtest; they are estimates with a small edge, not financial advice.
+
+**Alerts:** after every 4h candle close, the live service re-checks the advice and alerts you when a coin
+changes to Buy or Sell. Check the advice any time with `.venv\Scripts\python -m cryptoai advice`.
+
+- **Windows notifications** are on by default. They only appear when someone is logged in to the PC.
+- **Zalo**, to get alerts on your phone:
+  1. Go to [bot.zaloplatforms.com](https://bot.zaloplatforms.com), sign in with Zalo, create a bot and copy
+     its **bot token**.
+  2. In the Zalo app, open your new bot and send it any message, for example "hi".
+  3. On the PC running the AI, in PowerShell in the project folder, run:
+     ```
+     .venv\Scripts\python -m cryptoai zalo-setup <your bot token>
+     ```
+     You should get a "Crypto AI is connected" message in Zalo.
+  4. Send a test alert to every channel any time with `.venv\Scripts\python -m cryptoai notify-test`.
+
+  Alert settings, including the bot token, are saved in `notify.json`, which is kept off GitHub. To turn
+  Windows notifications off, set `"windows": false` in that file.
 
 ---
 
@@ -222,6 +257,8 @@ Repeat Part 1 on the new PC. Price data and models are rebuilt by `train.bat`. Y
 .venv\Scripts\python -m cryptoai market     # print live price, volume, market cap
 .venv\Scripts\python -m cryptoai daily      # one learning run
 .venv\Scripts\python -m cryptoai live       # always-on learning service
+.venv\Scripts\python -m cryptoai advice     # buy / sell / hold advice for your portfolio
+.venv\Scripts\python -m cryptoai simulate BNB/USDT 2026-01-01 2026-06-01 --cash 1000   # paper-trade a past period
 ```
 
 ### Folders

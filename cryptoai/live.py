@@ -21,7 +21,7 @@ import pandas as pd
 import requests
 from websockets.sync.client import connect
 
-from . import config, model, signals
+from . import advisor, config, model, signals
 
 STREAM_URL = "wss://stream.binance.com:9443/stream?streams="
 WAIT_FOR_ALL = 20  # seconds to wait for every symbol's close message before processing anyway
@@ -49,6 +49,20 @@ class LiveService:
         """Fetch new data, retrain, and log the signals for every model built on timeframe `tf`."""
         for name in [n for n, s in config.MODELS.items() if s["timeframe"] == tf]:
             self._learn_model(name, reason)
+        if tf == advisor_timeframe():
+            self.advise()
+
+    def advise(self):
+        """Re-check the portfolio advice with the fresh signals and alert on any change (Windows, Zalo)."""
+        try:
+            advice, changed = advisor.check_and_notify()
+        except NETWORK_ERRORS:
+            raise
+        except Exception:
+            log(f"advice check failed:\n{traceback.format_exc()}")
+            return
+        for r in changed.itertuples():
+            log(f"    ALERT: {r.action} {r.symbol}" + (f" ~${r.amount_usdt:,.0f}" if r.amount_usdt else ""))
 
     def _learn_model(self, tf, reason):
         t0 = time.time()
@@ -143,6 +157,11 @@ class LiveService:
 
 def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def advisor_timeframe():
+    """Timeframe of the models the advice reads; it is re-checked after their candle closes."""
+    return config.MODELS[advisor.DIRECTION]["timeframe"]
 
 
 def load_status():

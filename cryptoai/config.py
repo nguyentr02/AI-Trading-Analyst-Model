@@ -55,6 +55,12 @@ EXIT_PROB = 0.48  # go flat when P(up) falls below this
 LOG_DIR = ROOT / "logs"
 LIVE_STATUS = LOG_DIR / "live_status.json"
 
+# Portfolio advice and alerts (see cryptoai/advisor.py).
+NOTIFY_FILE = ROOT / "notify.json"  # alert settings incl. your Zalo bot token; kept off GitHub
+ADVICE_STATE = LOG_DIR / "advice_state.json"  # last advice per coin, so alerts fire only on changes
+MAX_PER_COIN = 0.30  # suggested buys keep any one coin to at most this share of the whole portfolio
+MIN_TRADE_USDT = 10.0  # ignore holdings and buys smaller than this (Binance's minimum order is about $5)
+
 for d in (DATA_DIR, MODEL_DIR, LOG_DIR):
     d.mkdir(exist_ok=True)
 
