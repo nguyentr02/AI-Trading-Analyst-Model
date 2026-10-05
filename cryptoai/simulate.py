@@ -135,7 +135,10 @@ def _smart_inputs(probs, symbol, start, end):
     p = pd.merge_asof(p.reset_index().sort_values("known_at"), daily.reset_index(drop=True).sort_values("known_at"),
                       on="known_at", direction="backward").set_index(p.index.name or "index")
     p.index.name = "time"
-    return p.drop(columns="known_at").dropna()
+    p = p.drop(columns="known_at").dropna()
+    if "meta" in probs:  # optional filter model's P(this buy pays off), see the meta-labelling experiment
+        p["meta"] = _for(probs["meta"], symbol, start, end).reindex(p.index)
+    return p
 
 
 def _smart_trade(p, candles, cash, fee, rules=SMART):
@@ -223,6 +226,9 @@ def _smart_trade(p, candles, cash, fee, rules=SMART):
 
         # 5. Buy signal: size by confidence; buy lower with a limit order if a dip is expected.
         target = target_for(p1)
+        meta_min = rules.get("meta_min")
+        if target is not None and meta_min is not None and not row.get("meta", 1.0) >= meta_min:
+            target = None  # the filter model expects this buy to lose: skip it
         if target is not None and not wait_reset:
             gap = target - coins * px / value(px)
             if gap >= rules["min_change"]:
