@@ -221,6 +221,36 @@ Ranked by expected value per unit of effort:
 
 ---
 
+## Results in this repo: their training methods on our models (2026-10-06)
+
+`experiments/training_practices.py` tested how other systems train, using our features, folds and embargo.
+The variant was chosen on 2022–2024 by walk-forward AUC, averaged over the two 4h models, then checked once
+on 2025–2026. Adoption needed a gain above 0.003 in both phases, the size of gain a meaningless moon-phase
+feature produced.
+
+| Training method (source) | AUC 2022–2024 | AUC 2025–2026 | Gain vs current |
+|---|---|---|---|
+| Expanding window, all history equally weighted (current) | 0.5460 | 0.5270 | – |
+| Ensemble: HistGradientBoosting + LightGBM (Qlib DoubleEnsemble, Numerai) | 0.5459 | 0.5292 | −0.0001 / +0.0022 |
+| Sliding window, last 3 years (FreqAI) | 0.5408 | 0.5202 | −0.0052 / −0.0067 |
+| Recency weights, halving each year (Qlib sample reweighting) | 0.5360 | 0.5156 | −0.0101 / −0.0113 |
+| Sliding window, last 2 years (FreqAI) | 0.5289 | 0.5177 | −0.0171 / −0.0093 |
+| Sliding window, last 1 year (FreqAI) | 0.5246 | 0.5031 | −0.0214 / −0.0238 |
+
+**Nothing adopted.**
+
+- **Shorter windows and recency weights hurt, consistently in both phases.** Whatever weak signal the
+  models find is stable across years, so more history beats "forgetting old regimes". The shorter the
+  window, the worse.
+- **The ensemble is a wash:** within the noise in both phases.
+- **Our training already matches the best practice** found in this survey: gradient-boosted trees on
+  engineered features, retrained continuously on an expanding window with an embargo.
+- **The remaining ideas here are strategy-level, not training:** trend rule + volatility targeting, an
+  ensemble of trend look-backs, and the AI's P(up) as a position sizer on top of the trend rule
+  (section 7, items 1–3).
+
+`TRIALS_TESTED` was raised to 25.
+
 ## Caveats
 
 - **Abstracts and secondary sources.** Several papers were read via arXiv abstract or HTML pages through a summarising tool, not in full: [15][16][18][19][30][31][36][38]. The Jaquart et al. Sharpe of 3.23 [16] comes from a search-result abstract; the publisher page was blocked.
