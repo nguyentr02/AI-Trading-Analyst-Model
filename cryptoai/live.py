@@ -21,7 +21,7 @@ import pandas as pd
 import requests
 from websockets.sync.client import connect
 
-from . import advisor, config, model, preview, signals
+from . import advisor, config, model, paper, preview, signals
 
 STREAM_URL = "wss://stream.binance.com:9443/stream?streams="
 WAIT_FOR_ALL = 20  # seconds to wait for every symbol's close message before processing anyway
@@ -45,6 +45,7 @@ class LiveService:
         self._saved_at = 0.0
         self._next_preview = 0.0  # due immediately
         self._preview_failing = False
+        self._paper_hour = None
 
     # ---------- learning ----------
     def learn(self, tf, reason):
@@ -53,6 +54,22 @@ class LiveService:
             self._learn_model(name, reason)
         if tf == advisor_timeframe():
             self.advise()
+        self.paper_trade(tf)
+
+    def paper_trade(self, tf):
+        """Let the paper account act on the fresh signals: the AI at 4h closes, the trend benchmark daily."""
+        if not paper.is_open():
+            return
+        try:
+            done = paper.step_ai() if tf == "4h" else paper.step_trend() if tf == "1d" else []
+        except NETWORK_ERRORS:
+            raise
+        except Exception:
+            log(f"paper trading step failed:\n{traceback.format_exc()}")
+            return
+        for r in done.itertuples() if len(done) else []:
+            log(f"    PAPER {r.account.upper()}: {r.side} {r.symbol} {r.quantity:.6f} at {r.price:,.2f} "
+                f"(${r.total:,.2f}) - {r.reason}")
 
     def advise(self):
         """Re-check the portfolio advice with the fresh signals and alert on any change (Windows, Zalo)."""
@@ -93,8 +110,17 @@ class LiveService:
         """Re-run the models on the live price (provisional signals, see preview.py). Never stops the service."""
         self._next_preview = time.time() + config.PREVIEW_EVERY
         try:
-            preview.compute()
+            live_now = preview.compute()
             self.status["last_preview"] = _now()
+            if paper.is_open():  # the paper AI may trade at any moment on the live readings
+                done = paper.step_ai_live(live_now)
+                for r in done.itertuples() if len(done) else []:
+                    log(f"    PAPER AI (live): {r.side} {r.symbol} {r.quantity:.6f} at {r.price:,.2f} "
+                        f"(${r.total:,.2f}) - {r.reason}")
+            hour = time.strftime("%Y%m%d%H", time.gmtime())
+            if paper.is_open() and hour != self._paper_hour:  # balance history: one point an hour
+                paper.snapshot()
+                self._paper_hour = hour
             self._preview_failing = False
         except Exception as e:
             if not self._preview_failing:  # log the first failure of a run of them, not one per minute

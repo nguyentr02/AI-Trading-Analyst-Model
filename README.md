@@ -211,6 +211,21 @@ changes to Buy or Sell. Check the advice any time with `.venv\Scripts\python -m 
   Alert settings, including the bot token, are saved in `notify.json`, which is kept off GitHub. To turn
   Windows notifications off, set `"windows": false` in that file.
 
+### Paper trading
+
+The **Paper trading** page runs a pretend account the AI trades live, from the moment it is opened (button
+on that page). The balance is split into one sleeve per coin (for $1,000: $250 each).
+
+- **The AI** uses the Smart rules: position size by next-1-day confidence, sell half if the 3-day view is
+  still up, take half profit at +10% once confidence fades, no stop-loss. It trades at any moment: at every
+  4h close on the confirmed signals, and in between on the live readings once an action has held for 10
+  minutes (each coin then waits an hour). Those two guards stop a reading that hovers around a threshold
+  from trading back and forth; they are a judgement and are not backtested.
+- **Benchmarks** run beside it from the same start: buy & hold, and the 50-day trend rule (checked daily).
+- **Fills** use the live Binance price with a 0.1% fee and 0.05% slippage. Nothing real is bought or sold.
+- **Everything is saved** in the `paper` folder (kept off GitHub): `account.json` (balances and positions),
+  `trades.csv` (every trade with its reason) and `balance.csv` (the balance every hour).
+
 ---
 
 ## Part 3: Look after it
