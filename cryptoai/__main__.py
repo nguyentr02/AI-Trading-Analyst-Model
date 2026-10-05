@@ -1,4 +1,4 @@
-"""Command line: python -m cryptoai [train|signals|backtest|market]"""
+"""Command line: python -m cryptoai [train|signals|backtest|market|daily]"""
 import argparse
 
 from . import backtest, config, market, model, signals
@@ -11,6 +11,7 @@ def main():
     sub.add_parser("signals", help="print current signals and log any changes")
     sub.add_parser("backtest", help="print backtest results from the last training run")
     sub.add_parser("market", help="print live price, volume and market cap")
+    sub.add_parser("daily", help="daily learning: fetch new candles, retrain, keep the better model, log signals")
     args = ap.parse_args()
 
     if args.cmd == "train":
@@ -18,6 +19,22 @@ def main():
             print(f"Training {tf} ...")
             for k, v in model.train(tf).items():
                 print(f"  {k}: {v}")
+
+    elif args.cmd == "daily":
+        from datetime import datetime, timezone
+
+        print(f"=== Daily learning run {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC ===")
+        for tf in config.TIMEFRAMES:
+            prev = model.load_metrics(tf)
+            m = model.train(tf, min_auc=config.MIN_AUC)
+            change = f" (was {prev['oos_auc']})" if prev else ""
+            verdict = "model updated" if m["accepted"] else f"REJECTED, below {config.MIN_AUC}: kept previous model"
+            print(f"{tf}: data to {m['last_candle'][:16]}, {m['rows']} rows, "
+                  f"walk-forward AUC {m['oos_auc']}{change}, accuracy {m['oos_accuracy']:.1%} -> {verdict}")
+        allsig, changed = signals.check_and_log()
+        print(allsig[["symbol", "timeframe", "price", "prob_up", "signal"]].to_string(index=False))
+        for r in changed.itertuples():
+            print(f"  CHANGED {r.symbol} {r.timeframe}: {r.signal} (P(up)={r.prob_up})")
 
     elif args.cmd == "signals":
         allsig, changed = signals.check_and_log()

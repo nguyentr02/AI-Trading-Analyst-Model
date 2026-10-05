@@ -31,6 +31,11 @@ HORIZON = {"4h": 6, "1d": 3}
 # How much history to download the first time.
 HISTORY_START = "2019-01-01T00:00:00Z"
 
+# Daily learning: a newly trained model replaces the current one only if its walk-forward AUC
+# is at least this (0.5 = no better than a coin flip). Otherwise the previous model is kept.
+MIN_AUC = 0.505
+TRAINING_LOG = MODEL_DIR / "training_log.csv"
+
 # Trading assumptions used in the backtest.
 FEE = 0.001  # 0.1% per side (Binance spot taker)
 ENTER_PROB = 0.55  # go long when P(up) rises above this

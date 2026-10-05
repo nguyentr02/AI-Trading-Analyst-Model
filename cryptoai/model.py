@@ -70,18 +70,28 @@ def walk_forward(ds, timeframe, n_folds=8):
     return pd.concat(out)
 
 
-def train(timeframe, refresh=True):
+def train(timeframe, refresh=True, min_auc=None):
+    """Retrain on all data up to the last closed candle and save the model.
+
+    With `min_auc`, the new model is saved only if its walk-forward AUC reaches it; otherwise the
+    current model is kept. Every run is appended to the training log either way.
+    """
     ds = dataset(timeframe, refresh)
     oos = walk_forward(ds, timeframe)
     metrics = {
         "timeframe": timeframe,
         "trained_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "last_candle": ds.index.max().isoformat(),
         "rows": int(ds["y"].notna().sum()),
         "oos_rows": len(oos),
         "oos_accuracy": round(accuracy_score(oos["y"], oos["prob"] > 0.5), 4),
         "oos_auc": round(roc_auc_score(oos["y"], oos["prob"]), 4),
         "baseline_up_rate": round(float(oos["y"].mean()), 4),
     }
+    metrics["accepted"] = min_auc is None or metrics["oos_auc"] >= min_auc
+    _log(metrics)
+    if not metrics["accepted"]:
+        return metrics
 
     labeled = ds.dropna(subset=["y"])
     cols = feature_cols(ds)
@@ -91,6 +101,17 @@ def train(timeframe, refresh=True):
     oos.to_csv(config.MODEL_DIR / f"oos_{timeframe}.csv")
     (config.MODEL_DIR / f"metrics_{timeframe}.json").write_text(json.dumps(metrics, indent=2))
     return metrics
+
+
+def _log(metrics):
+    row = pd.DataFrame([metrics])
+    row.to_csv(config.TRAINING_LOG, mode="a", header=not config.TRAINING_LOG.exists(), index=False)
+
+
+def load_log():
+    if not config.TRAINING_LOG.exists():
+        return pd.DataFrame()
+    return pd.read_csv(config.TRAINING_LOG, parse_dates=["trained_at", "last_candle"])
 
 
 def load(timeframe):

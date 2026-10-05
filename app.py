@@ -237,6 +237,21 @@ def page_backtest():
     st.caption(f"Walk-forward out-of-sample from {eq.index[0]:%Y-%m-%d}: each period is predicted by a model "
                f"trained only on earlier data. Fee {config.FEE:.2%} per trade side. Long or flat only.")
 
+    history = model.load_log()
+    if not history.empty:
+        with st.expander("Learning history"):
+            h = history[history["timeframe"] == tf]
+            fig = go.Figure(go.Scatter(x=h["trained_at"], y=h["oos_auc"], mode="lines+markers",
+                                       line=dict(color=BLUE, width=2), name="Walk-forward AUC",
+                                       hovertemplate="%{y:.4f}"))
+            fig.add_hline(y=config.MIN_AUC, line=dict(color=GREY, width=1, dash="dot"),
+                          annotation_text="minimum to accept", annotation_position="right")
+            st.plotly_chart(style(fig, 260), width="stretch")
+            st.dataframe(h.iloc[::-1][["trained_at", "last_candle", "rows", "oos_auc", "oos_accuracy", "accepted"]],
+                         hide_index=True, width="stretch")
+            st.caption("The model retrains every day on all data up to the last closed candle. "
+                       "A new model replaces the old one only if it still beats a coin flip out of sample.")
+
     with st.expander("All symbols"):
         rows = []
         for sy, gg in oos.groupby("symbol"):
