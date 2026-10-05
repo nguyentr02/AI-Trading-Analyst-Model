@@ -1,7 +1,7 @@
-"""Command line: python -m cryptoai [train|signals|backtest]"""
+"""Command line: python -m cryptoai [train|signals|backtest|market]"""
 import argparse
 
-from . import backtest, config, model, signals
+from . import backtest, config, market, model, signals
 
 
 def main():
@@ -10,6 +10,7 @@ def main():
     sub.add_parser("train", help="download data, train and evaluate the models")
     sub.add_parser("signals", help="print current signals and log any changes")
     sub.add_parser("backtest", help="print backtest results from the last training run")
+    sub.add_parser("market", help="print live price, volume and market cap")
     args = ap.parse_args()
 
     if args.cmd == "train":
@@ -44,6 +45,18 @@ def main():
                     f"{st['max_drawdown']:>10.0%}{bh['max_drawdown']:>9.0%}"
                     f"{st['sharpe']:>8.2f}{s['num_trades']:>8}"
                 )
+
+    elif args.cmd == "market":
+        df = market.snapshot()
+        for r in df.itertuples():
+            print(f"\n{r.symbol}  ${r.price:,.2f}  ({r.change_24h:+.2%} 24h)")
+            print(f"  24h high/low   ${r.high_24h:,.2f} / ${r.low_24h:,.2f}")
+            print(f"  24h volume     ${r.quote_volume_24h:,.0f} on Binance")
+            if "market_cap" in df:
+                print(f"  24h volume     ${r.total_volume_usd:,.0f} all exchanges")
+                print(f"  market cap     ${r.market_cap:,.0f}  (rank #{r.rank})")
+                print(f"  circulating    {r.circulating_supply:,.0f}")
+                print(f"  all-time high  ${r.ath:,.2f}  ({r.from_ath:+.1%} from ATH)")
 
 
 if __name__ == "__main__":

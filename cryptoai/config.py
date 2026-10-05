@@ -8,7 +8,13 @@ PORTFOLIO_FILE = ROOT / "portfolio.json"
 SIGNAL_LOG = ROOT / "signals_log.csv"
 
 EXCHANGE = "binance"
-SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
+SYMBOLS = ["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT"]
+
+# CoinGecko id for each symbol, used for market cap and supply data.
+COINGECKO_IDS = {"BTC/USDT": "bitcoin", "ETH/USDT": "ethereum", "BNB/USDT": "binancecoin", "SOL/USDT": "solana"}
+
+# How often the dashboard's Market tab redraws, in seconds. Binance pushes new prices once per second.
+LIVE_REFRESH = 1
 TIMEFRAMES = ["4h", "1d"]
 
 # How far ahead the model predicts, in candles (4h x 6 = 1 day, 1d x 3 = 3 days).

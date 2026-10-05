@@ -4,14 +4,14 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from cryptoai import backtest, config, data, model, portfolio, signals
+from cryptoai import backtest, config, data, market, model, portfolio, signals
 
-st.set_page_config(page_title="Crypto AI", page_icon="ðŸ“ˆ", layout="wide")
+st.set_page_config(page_title="Crypto AI", page_icon="📈", layout="wide")
 
 BLUE, ORANGE = "#2a78d6", "#eb6834"  # categorical slots 1 and 2
 UP, DOWN = "#1baf7a", "#e34948"
 GRID = "rgba(128,128,128,0.15)"
-SIGNAL_ICON = {"BULLISH": "â–² BULLISH", "BEARISH": "â–¼ BEARISH", "NEUTRAL": "â— NEUTRAL"}
+SIGNAL_ICON = {"BULLISH": "▲ BULLISH", "BEARISH": "▼ BEARISH", "NEUTRAL": "● NEUTRAL"}
 
 
 def style(fig, height):
@@ -27,9 +27,45 @@ def style(fig, height):
     return fig
 
 
-@st.cache_data(ttl=300, show_spinner="Fetching latest candlesâ€¦")
+@st.cache_data(ttl=300, show_spinner="Fetching latest candles…")
 def get_signals(tf):
     return signals.current(tf)
+
+
+@st.cache_resource
+def live_feed():
+    """One Binance WebSocket connection shared by every browser tab."""
+    return market.LiveFeed()
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def get_tickers():
+    """REST fallback, used only until the WebSocket has delivered its first update."""
+    return market.tickers()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_coingecko():
+    return market.coingecko()
+
+
+def usd(v):
+    """Compact dollar amount: $1.73T, $26.5B, $902.7M."""
+    if v is None or pd.isna(v):
+        return "–"
+    for div, unit in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if abs(v) >= div:
+            return f"${v / div:,.2f}{unit}"
+    return f"${v:,.2f}"
+
+
+def amount(v):
+    if v is None or pd.isna(v):
+        return "–"
+    for div, unit in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if abs(v) >= div:
+            return f"{v / div:,.2f}{unit}"
+    return f"{v:,.2f}"
 
 
 @st.cache_data(ttl=300)
@@ -38,7 +74,7 @@ def get_candles(sym, tf):
 
 
 # ---------------- sidebar ----------------
-st.sidebar.title("ðŸ“ˆ Crypto AI")
+st.sidebar.title("📈 Crypto AI")
 tf = st.sidebar.radio("Timeframe", config.TIMEFRAMES, index=1, horizontal=True)
 sym = st.sidebar.selectbox("Symbol", config.SYMBOLS)
 
@@ -50,8 +86,8 @@ if metrics:
         f"(coin-flip baseline {max(metrics['baseline_up_rate'], 1 - metrics['baseline_up_rate']):.1%}), "
         f"AUC **{metrics['oos_auc']:.3f}**"
     )
-if st.sidebar.button("ðŸ”„ Retrain models", help="Downloads fresh data and retrains (â‰ˆ1 min)"):
-    with st.spinner("Trainingâ€¦"):
+if st.sidebar.button("🔄 Retrain models", help="Downloads fresh data and retrains (≈1 min)"):
+    with st.spinner("Training…"):
         for t in config.TIMEFRAMES:
             model.train(t)
     st.cache_data.clear()
@@ -65,7 +101,66 @@ if model.load(tf) is None:
     st.error("No model yet. Run `python -m cryptoai train` or press **Retrain models**.")
     st.stop()
 
-tab_sig, tab_chart, tab_bt, tab_pf = st.tabs(["Signals", "Chart", "Backtest", "Portfolio"])
+tab_mkt, tab_sig, tab_chart, tab_bt, tab_pf = st.tabs(["Market", "Signals", "Chart", "Backtest", "Portfolio"])
+
+
+# ---------------- market (live) ----------------
+@st.fragment(run_every=config.LIVE_REFRESH)
+def live_market():
+    feed = live_feed()
+    tk = feed.tickers()
+    if tk is None:
+        try:
+            tk = get_tickers()
+        except Exception as e:
+            st.error(f"Could not reach Binance: {e}")
+            return
+    if feed.error:
+        st.warning(f"Live feed reconnecting, prices may be a few seconds old: {feed.error}")
+    try:
+        cg = get_coingecko()
+    except Exception as e:
+        cg = pd.DataFrame(columns=["symbol"])
+        st.warning(f"CoinGecko unavailable, market cap data hidden: {e}")
+    df = tk.merge(cg, on="symbol", how="left")
+
+    cols = st.columns(len(df))
+    for c, r in zip(cols, df.itertuples()):
+        c.metric(r.symbol, f"${r.price:,.2f}", f"{r.change_24h:+.2%} 24h")
+        c.caption(f"Market cap **{usd(getattr(r, 'market_cap', None))}**"
+                  + (f" · rank #{int(r.rank)}" if pd.notna(getattr(r, "rank", None)) else ""))
+
+    table = pd.DataFrame({
+        "Coin": df["symbol"],
+        "Price": df["price"].map(lambda v: f"${v:,.2f}"),
+        "1h": df.get("change_1h"),
+        "24h": df["change_24h"],
+        "7d": df.get("change_7d"),
+        "24h high": df["high_24h"].map(lambda v: f"${v:,.2f}"),
+        "24h low": df["low_24h"].map(lambda v: f"${v:,.2f}"),
+        "Volume 24h (Binance)": df["quote_volume_24h"].map(usd),
+        "Volume 24h (all exchanges)": df.get("total_volume_usd", pd.Series(dtype=float)).map(usd),
+        "Market cap": df.get("market_cap", pd.Series(dtype=float)).map(usd),
+        "FDV": df.get("fdv", pd.Series(dtype=float)).map(usd),
+        "Circulating supply": df.get("circulating_supply", pd.Series(dtype=float)).map(amount),
+        "Max supply": df.get("max_supply", pd.Series(dtype=float)).map(amount),
+        "All-time high": df.get("ath", pd.Series(dtype=float)).map(lambda v: "–" if pd.isna(v) else f"${v:,.2f}"),
+        "From ATH": df.get("from_ath"),
+    })
+    pct = ["1h", "24h", "7d", "From ATH"]
+    st.dataframe(
+        table.style.format({k: "{:+.2%}" for k in pct}, na_rep="–")
+        .map(lambda v: f"color: {UP}" if pd.notna(v) and v > 0 else f"color: {DOWN}" if pd.notna(v) and v < 0 else "",
+             subset=pct),
+        hide_index=True, width="stretch",
+    )
+    st.caption(f"Live. Price, 24h change, high/low and Binance volume streamed from Binance and redrawn every "
+               f"{config.LIVE_REFRESH}s. Market cap, supply, 1h/7d change and all-exchange volume from CoinGecko, "
+               f"refreshed every 60s. Last update {tk['updated'].max():%H:%M:%S} UTC.")
+
+
+with tab_mkt:
+    live_market()
 
 # ---------------- signals ----------------
 with tab_sig:
@@ -76,7 +171,7 @@ with tab_sig:
                  delta_color="normal" if r.signal == "BULLISH" else "inverse" if r.signal == "BEARISH" else "off")
         c.caption(f"P(up in {config.HORIZON[tf]} candles): **{r.prob_up:.0%}**")
     st.caption(
-        f"BULLISH when P(up) â‰¥ {config.ENTER_PROB:.0%}, BEARISH when â‰¤ {config.EXIT_PROB:.0%}. "
+        f"BULLISH when P(up) ≥ {config.ENTER_PROB:.0%}, BEARISH when ≤ {config.EXIT_PROB:.0%}. "
         f"Based on the last closed {tf} candle."
     )
     if config.SIGNAL_LOG.exists():
@@ -96,7 +191,7 @@ with tab_chart:
     prob = model.predict_history(df.iloc[-(lookback + 250):], tf).reindex(view.index)
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28], vertical_spacing=0.04,
-                        subplot_titles=(f"{sym} Â· {tf}", "Model P(up)"))
+                        subplot_titles=(f"{sym} · {tf}", "Model P(up)"))
     fig.add_trace(go.Candlestick(x=view.index, open=view.open, high=view.high, low=view.low, close=view.close,
                                  increasing_line_color=UP, decreasing_line_color=DOWN, name="Price",
                                  showlegend=False), row=1, col=1)
@@ -158,7 +253,7 @@ with tab_pf:
         column_config={"amount": st.column_config.NumberColumn(format="%.6f"),
                        "avg_cost": st.column_config.NumberColumn("avg cost (USDT)", format="%.4f")},
     )
-    if st.button("ðŸ’¾ Save holdings"):
+    if st.button("💾 Save holdings"):
         portfolio.save(edited.dropna().to_dict("records"))
         st.success("Saved.")
         st.rerun()
