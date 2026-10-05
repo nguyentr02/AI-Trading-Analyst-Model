@@ -57,7 +57,34 @@ def build(df):
     f["dow"] = df.index.dayofweek
     f["hour"] = df.index.hour
 
+    per_day = pd.Timedelta("1D") / (df.index[1] - df.index[0])  # candles per day: 6 on 4h, 1 on 1d
+
+    # Order flow: share of volume from aggressive buyers (market orders hitting the ask).
+    if "taker_buy_base" in df:
+        tb = df["taker_buy_base"]
+        f["taker_ratio"] = tb / v
+        for n in (6, 24):
+            f[f"taker_ratio_{n}"] = tb.rolling(n).sum() / v.rolling(n).sum()
+        f["taker_z"] = _z(f["taker_ratio"], 50)
+        f["trades_z"] = _z(df["trades"], 50)
+
+    # Derivatives positioning: funding rate and perpetual premium over spot.
+    if "funding" in df:
+        fr = df["funding"]
+        f["funding"] = fr
+        f["funding_3d"] = fr.rolling(max(int(3 * per_day), 1)).mean()
+        f["funding_z"] = _z(fr, int(90 * per_day))
+    if "premium" in df:
+        pr = df["premium"]
+        f["premium"] = pr
+        f["premium_7d"] = pr.rolling(int(7 * per_day)).mean()
+        f["premium_z"] = _z(pr, int(90 * per_day))
+
     return f.replace([np.inf, -np.inf], np.nan)
+
+
+def _z(s, n):
+    return (s - s.rolling(n, min_periods=n // 3).mean()) / s.rolling(n, min_periods=n // 3).std()
 
 
 MARKET = "BTC/USDT"
@@ -72,6 +99,10 @@ def build_all(raw):
     own = {s: build(df) for s, df in raw.items()}
     btc = own[MARKET][MARKET_COLS].add_prefix("btc_")
     rank = pd.DataFrame({s: df["close"].pct_change(24) for s, df in raw.items()}).rank(axis=1, pct=True)
+    if all("funding" in f for f in own.values()):
+        market_funding = pd.DataFrame({s: f["funding_3d"] for s, f in own.items()}).mean(axis=1)
+    else:
+        market_funding = None
 
     out = {}
     for s, f in own.items():
@@ -79,6 +110,8 @@ def build_all(raw):
         f["rel_btc_24"] = f["ret_24"] - f["btc_ret_24"]
         f["rel_btc_6"] = f["ret_6"] - f["btc_ret_6"]
         f["xs_rank_24"] = rank[s]
+        if market_funding is not None:
+            f["market_funding_3d"] = market_funding
         out[s] = f
     return out
 

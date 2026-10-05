@@ -163,6 +163,36 @@ All endpoints are public and need no API key. History limits were checked live o
 
 ---
 
+
+## Results in this repo (2026-10-05)
+
+The top two recommendations were implemented and tested with the existing walk-forward setup
+(8 folds, embargo equal to the horizon, 0.1% fee per side). Mean Sharpe is the long-or-flat strategy
+averaged over the four coins.
+
+| Feature set | 4h AUC | 4h AUC since 2024 | 4h mean Sharpe | 1d AUC | 1d AUC since 2024 | 1d mean Sharpe |
+|---|---|---|---|---|---|---|
+| Baseline (chart + market context) | 0.5310 | 0.5266 | 0.56 | **0.5272** | **0.5310** | **0.78** |
+| + order flow (taker ratio, trade count) | **0.5326** | **0.5275** | **0.59** | 0.5259 | 0.5257 | 0.68 |
+| + order flow + funding/premium (levels and z-scores) | 0.5267 | 0.5227 | 0.34 | 0.5169 | 0.5234 | 0.47 |
+| + order flow + funding/premium z-scores only | 0.5276 | 0.5230 | 0.35 | 0.5246 | 0.5285 | 0.69 |
+| Everything, minus `dow`/`hour`/`xs_rank_24` | 0.5255 | 0.5187 | 0.37 | 0.5142 | 0.5166 | 0.55 |
+
+Conclusions:
+
+- **Funding and premium lowered results on both timeframes**, in both raw and normalised form. The
+  evidence above says they mainly predict crashes, which are rare, and the funding regime shifted a lot
+  between 2020 and 2025. With shallow, heavily regularised trees, the extra noisy inputs seem to crowd out
+  the trend features.
+- **Order flow helped 4h by +0.0016 AUC**, well within noise (one standard error is about 0.003 at
+  44,800 test rows), **and hurt 1d**. Not adopted.
+- **Removing calendar and rank features hurt**, so they stay despite the weak literature.
+- All new features are still computed (`cryptoai/features.py`) and their data is still downloaded
+  (`cryptoai/data.py`). They are excluded through `UNUSED_FEATURES` in `cryptoai/config.py`, so they can be
+  re-tested later, for example with more data or a different model.
+- Five feature sets were compared, so the best result is optimistic by some amount (see the multiple-testing
+  caveat in 3.3).
+
 ## Caveats
 
 - Most peer-reviewed crypto evidence uses data from before 2020, often aggregated from CoinMarketCap or CoinDesk, and covers many small coins. Results for four large Binance pairs in 2021–2026 may be much weaker.

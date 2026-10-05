@@ -45,7 +45,7 @@ def dataset(timeframe, refresh=True):
 
 
 def feature_cols(ds):
-    return [c for c in ds.columns if c not in ("y", "fwd_ret_1", "symbol")]
+    return [c for c in ds.columns if c not in ("y", "fwd_ret_1", "symbol", *config.UNUSED_FEATURES)]
 
 
 def walk_forward(ds, timeframe, n_folds=8):

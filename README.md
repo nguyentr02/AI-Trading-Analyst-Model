@@ -29,7 +29,9 @@ Command line: `.venv\Scripts\python -m cryptoai [train|signals|backtest]`
 
 ## How it works
 
-- `cryptoai/data.py`: public Binance OHLCV through ccxt, cached in `data/`. No API key needed.
+- `cryptoai/data.py`: public Binance data, cached in `data/`. No API key needed. Spot candles with taker-buy
+  volume and trade count, plus futures funding rates and premium index (downloaded but currently unused by the
+  model, see `UNUSED_FEATURES` in `config.py`).
 - `cryptoai/features.py`: about 40 inputs. Each coin's own chart (returns, RSI, MACD, EMA distance, Bollinger,
   ATR, volatility, volume, long-term trend, distance from recent high, day and hour) plus market context:
   what BTC is doing, and each coin's strength against BTC and the other tracked coins.

@@ -17,6 +17,14 @@ COINGECKO_IDS = {"BTC/USDT": "bitcoin", "ETH/USDT": "ethereum", "BNB/USDT": "bin
 LIVE_REFRESH = 1
 TIMEFRAMES = ["4h", "1d"]
 
+# Features that are computed but not fed to the model. These were tested on 2026-10-05 and lowered
+# walk-forward AUC (see docs/research/reading-crypto-charts-for-day-trading.md, "Results in this repo").
+# Remove names from this list to test them again.
+UNUSED_FEATURES = [
+    "taker_ratio", "taker_ratio_6", "taker_ratio_24", "taker_z", "trades_z",
+    "funding", "funding_3d", "funding_z", "premium", "premium_7d", "premium_z", "market_funding_3d",
+]
+
 # How far ahead the model predicts, in candles (4h x 6 = 1 day, 1d x 3 = 3 days).
 HORIZON = {"4h": 6, "1d": 3}
 
