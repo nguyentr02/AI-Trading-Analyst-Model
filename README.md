@@ -211,24 +211,31 @@ changes to Buy or Sell. Check the advice any time with `.venv\Scripts\python -m 
   Alert settings, including the bot token, are saved in `notify.json`, which is kept off GitHub. To turn
   Windows notifications off, set `"windows": false` in that file.
 
-### Paper trading
+### Paper trading (4-week trial)
 
-The **Paper trading** page runs a pretend account the AI trades live, from the moment it is opened (button
-on that page). The balance is split into one sleeve per coin (for $1,000: $250 each).
+The **Paper trading** page runs five pretend accounts that started together and trade live for 4 weeks.
+Each starts with the same balance, split into one sleeve per coin (for $1,000: $250 each).
 
-- **The AI** uses the Smart rules: position size by next-1-day confidence, sell half if the 3-day view is
-  still up, take half profit at +10% once confidence fades, no stop-loss. It trades at any moment: at every
-  4h close on the confirmed signals, and in between on the live readings once an action has held for 10
-  minutes (each coin then waits an hour). Those two guards stop a reading that hovers around a threshold
-  from trading back and forth; they are a judgement and are not backtested.
-- **Crash buying:** if a coin closes 10% or more below where it was an hour earlier (checked on every
-  15-minute close), the AI buys with up to half of that coin's sleeve and sells 4 hours later. Tested in
-  `experiments/shock_dip_buy.py`: chosen on 2022-2024, it beat random timing in 2019-2021 (68 trades, +5.2%
-  net each) and 2025-2026 (6 trades). It is rare: a few times a year at most.
-- **Benchmarks** run beside it from the same start: buy & hold, and the 50-day trend rule (checked daily).
+| Account | Strategy |
+|---|---|
+| **AI Smart** | Sized by the AI's next-1-day confidence, sells half if the 3-day view is still up, takes half profit at +10%. Decides at every 4h close and on the live readings once an action holds 10 minutes (then 1 hour per coin; these guards are not backtested) |
+| **Trend + dip-buy** | Holds a coin while its daily close is above its 50-day average (highest return in testing) |
+| **Trend x AI + dip-buy** | Average of the 20/50/100/200-day trend rules, sized by the AI's next-3-days P(up), rebalanced daily (about half the drawdown and half the return in testing) |
+| Trend rule (benchmark) | The 50-day rule alone |
+| Buy & hold (benchmark) | Bought at the start, never sold |
+
+**Dip-buy** (the first three accounts): if a coin closes 10% or more below where it was an hour earlier
+(checked at every 15-minute close), buy with up to half of that coin's sleeve and sell 4 hours later. Tested
+in `experiments/shock_dip_buy.py`.
+
 - **Fills** use the live Binance price with a 0.1% fee and 0.05% slippage. Nothing real is bought or sold.
+- **Updates:** a notification with the standings every week (Windows and Zalo). After 4 weeks trading
+  stops, a report is written to `docs/backTestResult`, and you are notified.
 - **Everything is saved** in the `paper` folder (kept off GitHub): `account.json` (balances and positions),
-  `trades.csv` (every trade with its reason) and `balance.csv` (the balance every hour).
+  `trades.csv` (every trade with its reason) and `balance.csv` (every account's balance each hour). An
+  earlier account is archived to `paper_archive_<time>` when a new trial starts.
+- **Runs only while the learning service runs.** After downtime it catches up at the next close, but it
+  cannot trade on moves it missed.
 
 ---
 

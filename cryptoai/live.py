@@ -21,7 +21,7 @@ import pandas as pd
 import requests
 from websockets.sync.client import connect
 
-from . import advisor, config, model, paper, preview, signals
+from . import advisor, config, model, notify, paper, preview, signals
 
 STREAM_URL = "wss://stream.binance.com:9443/stream?streams="
 WAIT_FOR_ALL = 20  # seconds to wait for every symbol's close message before processing anyway
@@ -61,7 +61,7 @@ class LiveService:
         if not paper.is_open():
             return
         try:
-            done = paper.step_ai() if tf == "4h" else paper.step_trend() if tf == "1d" else []
+            done = paper.step_ai() if tf == "4h" else paper.step_daily() if tf == "1d" else []
         except NETWORK_ERRORS:
             raise
         except Exception:
@@ -123,6 +123,9 @@ class LiveService:
             if paper.is_open() and hour != self._paper_hour:  # balance history: one point an hour
                 paper.snapshot()
                 self._paper_hour = hour
+                news = paper.milestones(lambda title, body: notify.send(title, body))
+                if news:
+                    log(f"    PAPER: {news}")
             self._preview_failing = False
         except Exception as e:
             if not self._preview_failing:  # log the first failure of a run of them, not one per minute
@@ -165,7 +168,11 @@ class LiveService:
             self._save_status()
             self.catch_up()
             try:
-                with connect(self._url(), open_timeout=15, close_timeout=5, max_size=2**20) as ws:
+                # No client keepalive pings: retraining at a candle close occupies the process for minutes,
+                # so our own pings timed out and dropped the stream every time. Binance pings us instead and
+                # waits up to 10 minutes for the reply, which the client sends in the background.
+                with connect(self._url(), open_timeout=15, close_timeout=5, max_size=2**20,
+                             ping_interval=None) as ws:
                     log("Connected to Binance kline stream; waiting for candles to close")
                     self.status["state"] = "listening"
                     self._save_status()

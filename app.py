@@ -1,4 +1,6 @@
 """Dashboard. Run with:  .venv\\Scripts\\streamlit run app.py"""
+from pathlib import Path
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -939,19 +941,22 @@ def portfolio_overview(holdings):
 
 
 # ---------------- paper trading ----------------
+PAPER_COLORS = {"ai": "#0052FF", "trend_dip": "#F4B000", "trend_ai": "#C855E8", "trend": "#8A919E", "hold": "#B5BAC3"}
+
+
 def page_paper():
     st.title("Paper trading")
     acct = paper.load()
     if acct is None:
-        with st.container(border=True, width=520):
-            st.markdown("**Start a pretend account**")
-            st.caption("The AI trades it live with the Smart strategy at every 4h candle close, alongside a "
-                       "buy & hold and a 50-day trend benchmark. Nothing real is bought or sold.")
-            cash = st.number_input("Starting balance (USDT)", min_value=100.0, value=1000.0, step=100.0)
-            if st.button("Open paper account", type="primary", icon=":material/play_arrow:"):
+        with st.container(border=True, width=560):
+            st.markdown("**Start a 4-week paper trial**")
+            st.caption("Five pretend accounts start together and trade live: AI Smart, Trend + dip-buy, Trend × AI + "
+                       "dip-buy, and two benchmarks (trend rule, buy & hold). Nothing real is bought or sold.")
+            cash = st.number_input("Starting balance per account (USDT)", min_value=100.0, value=1000.0, step=100.0)
+            if st.button("Start trial", type="primary", icon=":material/play_arrow:"):
                 paper.open_account(cash)
                 paper.step_ai()
-                paper.step_trend()
+                paper.step_daily()
                 st.rerun()
         return
     paper_dashboard()
@@ -969,90 +974,99 @@ def paper_dashboard():
     acct = paper.load()
     prices = _live_prices()
     v = paper.value(acct, prices)
-    start = acct["start_cash"]
-    opened = pd.Timestamp(acct["opened"])
-    days = (pd.Timestamp.now(tz="UTC") - opened).total_seconds() / 86400
-    st.caption(f"Pretend ${start:,.0f} opened {opened:%b %d, %Y %H:%M} UTC ({days:.1f} days ago), split into one "
-               f"sleeve per coin. The AI trades with the Smart rules at any moment: at every 4h close on the "
-               f"confirmed signals, and between closes on the live readings once an action has held for "
-               f"{paper.CONFIRM_MINUTES} minutes (each coin then waits {paper.COOLDOWN_MINUTES} minutes; these two "
-               f"guards are not backtested). It also buys sudden crashes: a fall of {paper.SHOCK_DROP:.0%}+ within an "
-               f"hour buys up to half that coin's sleeve and sells it 4 hours later (tested, see experiments). Fills at the live Binance price with {acct['fee']:.1%} fee and "
-               f"{acct['slippage']:.2%} slippage. Nothing real is traded.")
+    start, names = acct["start_cash"], acct["names"]
+    opened, ends = pd.Timestamp(acct["opened"]), pd.Timestamp(acct["ends"])
+    now = pd.Timestamp.now(tz="UTC")
+    if paper.active(acct):
+        left = ends - now
+        st.caption(f"Trial: {opened:%b %d, %H:%M} → {ends:%b %d, %H:%M} UTC · day {(now - opened).days + 1} of "
+                   f"{(ends - opened).days} · {left.days} days {left.seconds // 3600} h left. Each account started with "
+                   f"${start:,.0f} (${start / len(config.SYMBOLS):,.0f} per coin). Fills at the live Binance price with "
+                   f"{acct['fee']:.1%} fee and {acct['slippage']:.2%} slippage. Nothing real is traded.")
+    else:
+        st.badge("Trial finished", icon=":material/flag:", color="blue")
+        if acct.get("final_report"):
+            st.caption(f"Final report: docs/backTestResult/{Path(acct['final_report']).name}")
 
-    hero = st.container(horizontal=True, gap="medium", vertical_alignment="bottom")
-    hero.metric("AI account balance", f"${v['ai']:,.2f}", f"{v['ai'] - start:+,.2f} USDT ({v['ai'] / start - 1:+.2%})",
-                border=True)
-    hero.metric("Trend rule benchmark", f"${v['trend']:,.2f}", f"{v['trend'] / start - 1:+.2%}", border=True,
-                help="Holds each coin's $ share while its daily close is above its 50-day average.")
-    hero.metric("Buy & hold benchmark", f"${v['hold']:,.2f}", f"{v['hold'] / start - 1:+.2%}", border=True,
-                help="Bought each coin's $ share at the start and never sold.")
-    lead = v["ai"] - max(v["trend"], v["hold"])
-    hero.metric("AI vs best benchmark", f"{lead:+,.2f} USDT", border=True,
-                help="Positive when the AI account is ahead of both benchmarks.")
+    cards = st.container(horizontal=True, gap="medium")
+    for a in sorted(v, key=lambda k: -v[k]):
+        cards.metric(names[a], f"${v[a]:,.2f}", f"{v[a] - start:+,.2f} ({v[a] / start - 1:+.2%})", border=True)
 
     hist = paper.balance_history()
     if len(hist):
-        now_row = pd.DataFrame([{"time": pd.Timestamp.now(tz="UTC"), "ai": v["ai"], "trend": v["trend"], "hold": v["hold"]}])
-        h = pd.concat([hist[["time", "ai", "trend", "hold"]], now_row], ignore_index=True)
+        live_row = pd.DataFrame([{"time": now, **v}])
+        h = pd.concat([hist, live_row], ignore_index=True)
         fig = go.Figure()
-        for col, label, color, width, dash in (("hold", "Buy & hold", GREY, 1.5, "dot"),
-                                               ("trend", "Trend rule", GREY, 1.5, None), ("ai", "AI account", BLUE, 2.6, None)):
-            fig.add_trace(go.Scatter(x=h["time"], y=h[col], name=label, mode="lines", line=dict(color=color, width=width, dash=dash),
-                                     hovertemplate="$%{y:,.2f}"))
+        for a in reversed(list(names)):
+            if a not in h:
+                continue
+            bench = a in ("trend", "hold")
+            fig.add_trace(go.Scatter(x=h["time"], y=h[a], name=names[a], mode="lines", hovertemplate="$%{y:,.2f}",
+                                     line=dict(color=PAPER_COLORS[a], width=1.5 if bench else 2.4,
+                                               dash="dot" if bench else None)))
         fig.add_hline(y=start, line=dict(color=GREY, width=1, dash="dash"))
         fig.update_yaxes(tickprefix="$", side="right")
-        st.plotly_chart(style(fig, 300), width="stretch", alt="Paper account balance over time against the benchmarks")
+        st.plotly_chart(style(fig, 320), width="stretch", alt="Balance of every paper account over time")
 
+    with st.expander("What each account does", icon=":material/info:"):
+        st.markdown(
+            "- **AI Smart**: invests by the AI's next-1-day confidence, sells half if the 3-day view is still up, takes "
+            "half profit at +10%. Decides at every 4h close and on the live readings once an action holds "
+            f"{paper.CONFIRM_MINUTES} minutes (then {paper.COOLDOWN_MINUTES} min per coin; not backtested).\n"
+            "- **Trend + dip-buy**: holds a coin while its daily close is above its 50-day average (the rule with the "
+            "highest return in testing).\n"
+            "- **Trend × AI + dip-buy**: average of the 20/50/100/200-day trend rules, sized by the AI's next-3-days "
+            "P(up) and rebalanced daily (about half the drawdown and half the return in testing).\n"
+            f"- **Dip-buy** (first three): a {paper.SHOCK_DROP:.0%}+ fall within an hour buys up to half that coin's "
+            "sleeve, sold 4 hours later (tested in experiments/shock_dip_buy.py).\n"
+            "- **Benchmarks**: the 50-day trend rule alone, and buy & hold.")
+
+    which = st.segmented_control("Account", list(names), default="ai", key="paper_account",
+                                 format_func=names.get) or "ai"
     st.subheader("Wallet")
-    left, right = st.columns([2.2, 1], gap="large")
+    left_col, right_col = st.columns([2.2, 1], gap="large")
     sig = get_signals("4h", model_version("4h")).set_index("symbol")
     rows = []
-    for sym, sl in acct["accounts"]["ai"].items():
+    for sym, sl in acct["accounts"][which].items():
         px = prices[sym]
-        shock = sl.get("shock") or {}
-        qty, cost = sl["qty"] + shock.get("qty", 0.0), sl["cost"] + shock.get("cost", 0.0)  # incl. a shock dip-buy
+        qty, cost = paper.holdings(sl)
         val = qty * px
-        rows.append({"Coin": coin_label(sym), "Amount": qty, "Avg cost": cost / qty if qty else None,
-                     "Price": px, "Value": val, "P&L": val - cost if qty else None,
-                     "P&L %": val / cost - 1 if qty else None,
+        rows.append({"Coin": coin_label(sym), "Amount": qty, "Avg cost": cost / qty if qty else None, "Price": px,
+                     "Value": val, "P&L": val - cost if qty else None, "P&L %": val / cost - 1 if qty else None,
                      "Invested": val / (val + sl["cash"]) if val + sl["cash"] else 0,
                      "AI next 1 day": SIGNAL_ARROW[sig.loc[sym, "signal"]] + f" {sig.loc[sym, 'prob_up']:.0%}"})
-    cash = sum(sl["cash"] for sl in acct["accounts"]["ai"].values())
+    cash = sum(sl["cash"] for sl in acct["accounts"][which].values())
     rows.append({"Coin": "USDT (cash)", "Amount": cash, "Avg cost": None, "Price": 1.0, "Value": cash, "P&L": None,
                  "P&L %": None, "Invested": None, "AI next 1 day": ""})
     wallet = pd.DataFrame(rows)
-    with left:
+    with left_col:
         st.dataframe(
             wallet.style.format({"P&L %": "{:+.2%}", "P&L": "{:+,.2f}"}, na_rep="–")
             .map(lambda x: f"color: {UP}" if isinstance(x, (int, float)) and x > 0 else
                  f"color: {DOWN}" if isinstance(x, (int, float)) and x < 0 else "", subset=["P&L", "P&L %"])
             .map(lambda x: f"color: {UP}" if str(x).startswith("▲") else f"color: {DOWN}" if str(x).startswith("▼") else "",
                  subset=["AI next 1 day"]),
-            hide_index=True, width="stretch", alt="Coins and cash held by the paper AI account",
+            hide_index=True, width="stretch", alt=f"Coins and cash held by the {names[which]} account",
             column_config={"Amount": st.column_config.NumberColumn(format="%.6f"),
                            "Avg cost": st.column_config.NumberColumn(format="dollar"),
                            "Price": st.column_config.NumberColumn(format="dollar"),
                            "Value": st.column_config.NumberColumn(format="dollar"),
                            "Invested": st.column_config.ProgressColumn("Sleeve invested", format="percent",
                                                                        min_value=0, max_value=1)})
-    with right:
+    with right_col:
         alloc = wallet[wallet["Value"] > 0.01]
-        fig = go.Figure(go.Pie(labels=alloc["Coin"].str.split("  ").str[-1], values=alloc["Value"], hole=0.62, sort=False,
-                               marker=dict(colors=[COIN_COLORS.get(f"{c}/USDT", GREY) if c != "USDT (cash)" else "#C9CDD4"
-                                                   for c in alloc["Coin"].str.split("  ").str[-1]]),
+        ticks = alloc["Coin"].str.split("  ").str[-1]
+        fig = go.Figure(go.Pie(labels=ticks, values=alloc["Value"], hole=0.62, sort=False,
+                               marker=dict(colors=[COIN_COLORS.get(f"{c}/USDT", "#C9CDD4") for c in ticks]),
                                textinfo="label+percent", hovertemplate="%{label}: $%{value:,.2f}<extra></extra>"))
         fig.update_layout(height=240, margin=dict(l=0, r=0, t=0, b=0), showlegend=False)
-        st.plotly_chart(fig, width="stretch", alt="Paper account allocation between coins and cash")
+        st.plotly_chart(fig, width="stretch", alt=f"Allocation of the {names[which]} account")
 
     st.subheader("Trade history")
     t = paper.trades()
-    which = st.segmented_control("Account", ["ai", "trend", "hold"], default="ai", key="paper_account",
-                                 format_func={"ai": "AI", "trend": "Trend rule", "hold": "Buy & hold"}.get)
-    t = t[t["account"] == (which or "ai")].iloc[::-1]
+    t = t[t["account"] == which].iloc[::-1]
     if t.empty:
-        st.caption("No trades yet. The AI only buys when its next-1-day P(up) reaches 55%; it re-checks at every "
-                   "4h candle close (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC).")
+        st.caption("No trades yet in this account.")
         return
     st.dataframe(
         pd.DataFrame({"Time (UTC)": t["time"].dt.strftime("%b %d, %H:%M"), "Pair": t["symbol"], "Side": t["side"],
@@ -1060,7 +1074,7 @@ def paper_dashboard():
                       "Reason": t["reason"]})
         .style.map(lambda x: f"color: {UP}; font-weight: 600" if x == "BUY" else f"color: {DOWN}; font-weight: 600"
                    if x == "SELL" else "", subset=["Side"]),
-        hide_index=True, width="stretch", alt="Paper trades with price, amount, fee and reason",
+        hide_index=True, width="stretch", alt=f"Trades of the {names[which]} account",
         column_config={"Price": st.column_config.NumberColumn(format="dollar"),
                        "Amount": st.column_config.NumberColumn(format="%.6f"),
                        "Total (USDT)": st.column_config.NumberColumn(format="dollar"),
