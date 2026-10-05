@@ -24,11 +24,20 @@ def _cache_path(symbol, timeframe):
     return config.DATA_DIR / f"{symbol.replace('/', '_')}_{timeframe}.csv"
 
 
+_loaded = {}  # path -> (modification time, DataFrame): parsing the big 15m files takes about a second each
+
+
 def _load(path):
+    """Read a cache file, reusing the parsed copy while the file is unchanged. Callers must not modify it."""
     if not path.exists():
         return pd.DataFrame()
+    mtime = path.stat().st_mtime_ns
+    hit = _loaded.get(path)
+    if hit and hit[0] == mtime:
+        return hit[1]
     df = pd.read_csv(path, index_col="time")
     df.index = pd.to_datetime(df.index, format="ISO8601", utc=True).as_unit("ms")
+    _loaded[path] = (mtime, df)
     return df
 
 

@@ -40,8 +40,19 @@ def style(fig, height):
 
 @st.cache_data(ttl=300, max_entries=8, show_spinner="Fetching latest candles…")
 def get_signals(tf, model_version=None):
-    """`model_version` (the model's training time) makes a retrained model show up immediately."""
-    return signals.current(tf)
+    """`model_version` (the model's training time) makes a retrained model show up immediately.
+
+    Uses the data the live service keeps up to date, rather than downloading it again here. If the service
+    isn't running, it downloads the latest candles itself.
+    """
+    return signals.current(tf, refresh=not service_running())
+
+
+def service_running():
+    s = live.load_status()
+    if s is None:
+        return False
+    return (pd.Timestamp.now(tz="UTC") - pd.Timestamp(s["updated"])).total_seconds() < 180
 
 
 def model_version(tf):
@@ -92,8 +103,10 @@ def get_candles(sym, tf):
 
 # Keep the timeframe and symbol selection when moving between pages.
 st.session_state.setdefault("model", "4h")
+st.session_state.setdefault("chart_interval", "4h")
+st.session_state.setdefault("chart_ind", ["MA", "Volume", "AI signal"])
 st.session_state.setdefault("sym", config.SYMBOLS[0])
-for k in ("model", "sym"):
+for k in ("model", "sym", "chart_interval", "chart_ind"):
     st.session_state[k] = st.session_state[k]
 
 
@@ -135,33 +148,48 @@ def live_market():
         c.caption(f"Market cap **{usd(getattr(r, 'market_cap', None))}**"
                   + (f" · rank #{int(r.rank)}" if pd.notna(getattr(r, "rank", None)) else ""))
 
-    table = pd.DataFrame({
+    col = lambda name: df.get(name, pd.Series(index=df.index, dtype=float))  # CoinGecko columns may be missing
+    dollars = lambda v: "–" if pd.isna(v) else f"${v:,.2f}"
+
+    # Two narrower tables instead of one wide one, so neither needs a horizontal scrollbar.
+    st.subheader("Price action")
+    price = pd.DataFrame({
         "Coin": df["symbol"],
-        "Price": df["price"].map(lambda v: f"${v:,.2f}"),
-        "1h": df.get("change_1h"),
+        "Price": df["price"].map(dollars),
+        "1h": col("change_1h"),
         "24h": df["change_24h"],
-        "7d": df.get("change_7d"),
-        "24h high": df["high_24h"].map(lambda v: f"${v:,.2f}"),
-        "24h low": df["low_24h"].map(lambda v: f"${v:,.2f}"),
+        "7d": col("change_7d"),
+        "24h high": df["high_24h"].map(dollars),
+        "24h low": df["low_24h"].map(dollars),
         "Volume 24h (Binance)": df["quote_volume_24h"].map(usd),
-        "Volume 24h (all exchanges)": df.get("total_volume_usd", pd.Series(dtype=float)).map(usd),
-        "Market cap": df.get("market_cap", pd.Series(dtype=float)).map(usd),
-        "FDV": df.get("fdv", pd.Series(dtype=float)).map(usd),
-        "Circulating supply": df.get("circulating_supply", pd.Series(dtype=float)).map(amount),
-        "Max supply": df.get("max_supply", pd.Series(dtype=float)).map(amount),
-        "All-time high": df.get("ath", pd.Series(dtype=float)).map(lambda v: "–" if pd.isna(v) else f"${v:,.2f}"),
-        "From ATH": df.get("from_ath"),
     })
-    pct = ["1h", "24h", "7d", "From ATH"]
+    colored_table(price, ["1h", "24h", "7d"], "Live price, change and 24h range for each coin")
+
+    st.subheader("Market data")
+    mkt = pd.DataFrame({
+        "Coin": df["symbol"],
+        "Market cap": col("market_cap").map(usd),
+        "FDV": col("fdv").map(usd),
+        "Volume 24h (all exchanges)": col("total_volume_usd").map(usd),
+        "Circulating supply": col("circulating_supply").map(amount),
+        "Max supply": col("max_supply").map(amount),
+        "All-time high": col("ath").map(dollars),
+        "From ATH": col("from_ath"),
+    })
+    colored_table(mkt, ["From ATH"], "Market cap, supply and all-time high for each coin")
+    st.caption(f"Live. Price, 24h change, high/low and Binance volume streamed from Binance and redrawn every "
+               f"{config.LIVE_REFRESH}s. Market cap, supply, 1h/7d change and all-exchange volume from CoinGecko, "
+               f"refreshed every 60s. Last update {tk['updated'].max():%H:%M:%S} UTC.")
+
+
+def colored_table(table, pct, alt):
+    """Dataframe with percentage columns formatted and colored green (up) or red (down)."""
     st.dataframe(
         table.style.format({k: "{:+.2%}" for k in pct}, na_rep="–")
         .map(lambda v: f"color: {UP}" if pd.notna(v) and v > 0 else f"color: {DOWN}" if pd.notna(v) and v < 0 else "",
              subset=pct),
-        hide_index=True, width="stretch",
+        hide_index=True, width="stretch", alt=alt,
     )
-    st.caption(f"Live. Price, 24h change, high/low and Binance volume streamed from Binance and redrawn every "
-               f"{config.LIVE_REFRESH}s. Market cap, supply, 1h/7d change and all-exchange volume from CoinGecko, "
-               f"refreshed every 60s. Last update {tk['updated'].max():%H:%M:%S} UTC.")
 
 
 def page_market():
@@ -224,30 +252,174 @@ def signal_board(tf):
 
 
 # ---------------- chart ----------------
-def page_chart():
-    st.title("Chart")
-    tf, sym = controls()
-    ctf = config.MODELS[tf]["timeframe"]
-    df = get_candles(sym, ctf)
-    lookback = st.slider("Candles shown", 60, 1000, 240, step=20)
-    view = df.iloc[-lookback:]
-    raw = {s: get_candles(s, ctf).iloc[-(lookback + 250):] for s in config.SYMBOLS}
-    prob = model.predict_history(raw, tf)[sym].reindex(view.index)
+CHART_INTERVALS = {"15m": "15m", "1h": "1h", "4h": "4h", "1D": "1d"}  # button label -> Binance interval
+INDICATORS = ["MA", "Bollinger", "Volume", "AI signal"]
+MA_COLORS = {7: "#F4B000", 25: "#C855E8", 99: "#8A919E"}  # Binance's default MA(7/25/99)
+INITIAL_CANDLES = 150  # shown at first; zoom out or pan to see the rest
 
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28], vertical_spacing=0.04,
-                        subplot_titles=(f"{sym} · {ctf}", f"Model P(up, {config.MODELS[tf]['label'].lower()})"))
-    fig.add_trace(go.Candlestick(x=view.index, open=view.open, high=view.high, low=view.low, close=view.close,
-                                 increasing_line_color=UP, decreasing_line_color=DOWN, name="Price",
-                                 showlegend=False), row=1, col=1)
-    fig.add_trace(go.Scatter(x=prob.index, y=prob, line=dict(color=BLUE, width=2), name="P(up)",
-                             showlegend=False, hovertemplate="%{y:.0%}"), row=2, col=1)
-    for y, lbl in ((config.ENTER_PROB, "enter"), (config.EXIT_PROB, "exit")):
-        fig.add_hline(y=y, line=dict(color=GREY, width=1, dash="dot"), row=2, col=1,
-                      annotation_text=lbl, annotation_position="right")
-    fig.update_yaxes(tickformat=".0%", row=2, col=1)
-    st.plotly_chart(style(fig, 650), width="stretch")
-    st.caption("Past probabilities here come from the final model, which was trained on this data, so they look "
-               "better than reality. Use the Backtest page for honest performance.")
+
+@st.cache_data(ttl=10, show_spinner=False)
+def recent_candles(sym, interval, limit=400):
+    """Latest candles straight from Binance, including the one still forming (like an exchange chart)."""
+    rows = data.exchange().fetch_ohlcv(sym, interval, limit=limit)
+    df = pd.DataFrame(rows, columns=["time", "open", "high", "low", "close", "volume"])
+    df["time"] = pd.to_datetime(df["time"], unit="ms", utc=True)
+    return df.set_index("time")
+
+
+@st.cache_data(ttl=300, max_entries=6, show_spinner=False)
+def ai_history(name, version):
+    """The model's P(up) for recent closed candles of every coin. `version` refreshes it after a retrain."""
+    tf = config.MODELS[name]["timeframe"]
+    raw = {s: df.iloc[-(400 + 250):] for s, df in data.closed(tf, refresh=False).items()}
+    return model.predict_history(raw, name)
+
+
+def coin(sym):
+    return sym.split("/")[0]
+
+
+def page_chart():
+    bar = st.container(horizontal=True, vertical_alignment="bottom", gap="medium")
+    sym = bar.segmented_control("Coin", config.SYMBOLS, key="sym", required=True, format_func=coin)
+    interval = bar.segmented_control("Interval", list(CHART_INTERVALS), key="chart_interval", required=True)
+    shown = bar.pills("Indicators", INDICATORS, key="chart_ind", selection_mode="multi")
+
+    main, side = st.columns([3.3, 1], gap="medium")
+    with main:
+        price_header(sym)
+        price_chart(sym, interval, tuple(shown))
+    with side:
+        ai_outlook(sym)
+
+
+@st.fragment(run_every=2)
+def price_header(sym):
+    """Exchange-style header: pair, big live price, 24h change and a stats strip."""
+    tk = live_feed().tickers()
+    if tk is None:
+        tk = get_tickers()
+    t = tk.set_index("symbol").loc[sym]
+    try:
+        cap = get_coingecko().set_index("symbol").loc[sym, "market_cap"]
+    except Exception:
+        cap = None
+
+    head = st.container(horizontal=True, vertical_alignment="center", gap="large")
+    head.metric(f"{coin(sym)} / USDT", f"${t.price:,.2f}", f"{t.change_24h:+.2%} 24h", width="content")
+    # Secondary stats small, as on an exchange, so the price stays the focus.
+    for label, value in (("24h high", f"${t.high_24h:,.2f}"), ("24h low", f"${t.low_24h:,.2f}"),
+                         ("24h volume", usd(t.quote_volume_24h)), ("Market cap", usd(cap))):
+        head.markdown(f":gray[{label}]  \n**{value}**", width="content")
+
+
+@st.fragment(run_every=10)
+def price_chart(sym, interval, shown):
+    """Candles (with the forming one), indicators, volume and the AI's P(up), refreshed every 10 seconds."""
+    tf = CHART_INTERVALS[interval]
+    try:
+        df = recent_candles(sym, tf)
+    except Exception as e:
+        st.warning(f"Could not load candles from Binance: {e}")
+        return
+    step = df.index[1] - df.index[0]
+    ai_models = [n for n, s in config.MODELS.items() if s["timeframe"] == tf] if "AI signal" in shown else []
+
+    rows = ["price"] + (["volume"] if "Volume" in shown else []) + (["ai"] if ai_models else [])
+    heights = {"price": 0.64, "volume": 0.14, "ai": 0.22}
+    fig = make_subplots(rows=len(rows), cols=1, shared_xaxes=True, vertical_spacing=0.035,
+                        row_heights=[heights[r] / sum(heights[x] for x in rows) for r in rows])
+    row = {r: i + 1 for i, r in enumerate(rows)}
+
+    fig.add_trace(go.Candlestick(
+        x=df.index, open=df.open, high=df.high, low=df.low, close=df.close, name=coin(sym),
+        increasing=dict(line_color=UP, fillcolor=UP), decreasing=dict(line_color=DOWN, fillcolor=DOWN),
+        showlegend=False), row=1, col=1)
+
+    if "MA" in shown:
+        for n, color in MA_COLORS.items():
+            fig.add_trace(go.Scatter(x=df.index, y=df.close.rolling(n).mean(), name=f"MA({n})",
+                                     line=dict(color=color, width=1.2), hovertemplate="%{y:,.2f}"), row=1, col=1)
+    if "Bollinger" in shown:
+        mid, sd = df.close.rolling(20).mean(), df.close.rolling(20).std()
+        fig.add_trace(go.Scatter(x=df.index, y=mid + 2 * sd, name="BB upper", line=dict(color=BLUE, width=1),
+                                 opacity=0.6, hovertemplate="%{y:,.2f}", showlegend=False), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=mid - 2 * sd, name="BOLL(20, 2)", line=dict(color=BLUE, width=1),
+                                 opacity=0.6, fill="tonexty", fillcolor="rgba(87,139,250,0.07)",
+                                 hovertemplate="%{y:,.2f}"), row=1, col=1)
+
+    # Current price line with a price tag on the axis, coloured by the forming candle's direction.
+    last = df.iloc[-1]
+    last_color = UP if last.close >= last.open else DOWN
+    fig.add_hline(y=last.close, line=dict(color=last_color, width=1, dash="dot"), row=1, col=1)
+    fig.add_annotation(x=1, xref="paper", y=last.close, yref="y", text=f" {last.close:,.2f} ", showarrow=False,
+                       xanchor="left", font=dict(color="white", size=11), bgcolor=last_color)
+
+    if "volume" in row:
+        colors = [UP if c >= o else DOWN for o, c in zip(df.open, df.close)]
+        fig.add_trace(go.Bar(x=df.index, y=df.volume, name="Volume", marker_color=colors, opacity=0.55,
+                             showlegend=False, hovertemplate="%{y:,.0f}"), row=row["volume"], col=1)
+
+    if ai_models:
+        for name in ai_models:
+            hist = ai_history(name, model_version(name))
+            if hist is None or sym not in hist:
+                continue
+            p = hist[sym].reindex(df.index)
+            main_model = name == ai_models[-1]
+            fig.add_trace(go.Scatter(
+                x=p.index, y=p, name=f"AI P(up) {config.MODELS[name]['label'].lower()}",
+                line=dict(color=BLUE if main_model else GREY, width=2 if main_model else 1.2),
+                hovertemplate="%{y:.0%}"), row=row["ai"], col=1)
+        for y in (config.ENTER_PROB, config.EXIT_PROB):
+            fig.add_hline(y=y, line=dict(color=GREY, width=1, dash="dot"), row=row["ai"], col=1)
+        fig.update_yaxes(tickformat=".0%", row=row["ai"], col=1)
+
+    # Open on the latest candles with room on the right, like an exchange chart, and keep the viewer's
+    # zoom across the 10-second refreshes (uirevision) until they switch coin or interval.
+    view = df.iloc[-INITIAL_CANDLES:]
+    pad = (view.high.max() - view.low.min()) * 0.06
+    fig.update_xaxes(range=[view.index[0], df.index[-1] + 6 * step])
+    fig.update_yaxes(range=[view.low.min() - pad, view.high.max() + pad], row=1, col=1)
+    fig.update_layout(
+        height=620, margin=dict(l=0, r=70, t=10, b=0), uirevision=f"{sym}-{interval}",
+        hovermode="x unified", dragmode="pan", xaxis_rangeslider_visible=False, bargap=0.15,
+        legend=dict(orientation="h", x=0, y=1.0, yanchor="bottom", font=dict(size=11), bgcolor="rgba(0,0,0,0)"),
+    )
+    fig.update_xaxes(gridcolor=GRID, showspikes=True, spikemode="across", spikesnap="cursor",
+                     spikedash="dot", spikethickness=1, spikecolor=GREY)
+    fig.update_yaxes(gridcolor=GRID, side="right", showspikes=True, spikemode="across", spikesnap="cursor",
+                     spikedash="dot", spikethickness=1, spikecolor=GREY)
+    st.plotly_chart(fig, width="stretch", alt=f"{coin(sym)} {interval} candlestick chart",
+                    config={"scrollZoom": True, "displaylogo": False,
+                            "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"]})
+    note = "Scroll to zoom, drag to pan, double-click to reset."
+    if ai_models:
+        note += (" The AI line is the model's P(up) at each closed candle. Past values come from the model "
+                 "trained on that data, so they look better than reality; see Backtest for honest results.")
+    elif "AI signal" in shown:
+        note += " The AI line appears on the 4h and 1D intervals, the timeframes the models are built on."
+    st.caption(note)
+
+
+def ai_outlook(sym):
+    """Side panel: what each model expects for this coin."""
+    st.subheader("AI outlook", icon=":material/psychology:")
+    for name, spec in config.MODELS.items():
+        if model.load(name) is None:
+            continue
+        sig = get_signals(name, model_version(name)).set_index("symbol").loc[sym]
+        color = {"BULLISH": "green", "BEARISH": "red"}.get(sig.signal, "gray")
+        icon = {"BULLISH": ":material/trending_up:", "BEARISH": ":material/trending_down:"}.get(
+            sig.signal, ":material/trending_flat:")
+        with st.container(border=True):
+            top = st.container(horizontal=True, vertical_alignment="center")
+            top.markdown(f"**{spec['label']}**")
+            top.badge(sig.signal.title(), icon=icon, color=color)
+            st.progress(float(sig.prob_up), text=f"P(up) {sig.prob_up:.0%}")
+            st.caption(TRUST.get(name, "The main signal.").strip())
+    st.caption(f"Bullish at {config.ENTER_PROB:.0%}+, bearish at {config.EXIT_PROB:.0%} or less. "
+               "Estimates with a small edge, not advice.")
 
 
 # ---------------- backtest ----------------
