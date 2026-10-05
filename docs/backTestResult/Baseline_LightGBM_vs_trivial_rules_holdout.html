@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Baseline Holdout Test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #ffffff; --surface: #f7f8f9; --text: #0a0b0d; --muted: #5b616e; --border: #dee1e7;
+    --accent: #0052ff; --good: #098551; --bad: #cf202f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0a0b0d; --surface: #16171a; --text: #ffffff; --muted: #8a919e; --border: #2a2c31;
+      --accent: #578bfa; --good: #27ad75; --bad: #f0616d;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0a0b0d; --surface: #16171a; --text: #ffffff; --muted: #8a919e; --border: #2a2c31;
+    --accent: #578bfa; --good: #27ad75; --bad: #f0616d;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 Inter, "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 40px 16px 64px; }
+  h1 { font-size: 32px; line-height: 1.2; margin: 0 0 6px; }
+  h2 { font-size: 21px; margin: 40px 0 10px; }
+  .byline { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+  .lead { font-size: 17px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 20px 0 8px; }
+  .kpi { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; background: var(--surface); }
+  .kpi .label { color: var(--muted); font-size: 13px; }
+  .kpi .value { font-size: 24px; font-weight: 600; }
+  .kpi .sub { font-size: 13px; }
+  .neg { color: var(--bad); } .pos { color: var(--good); }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; margin: 12px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { padding: 9px 12px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); }
+  th { background: var(--surface); color: var(--muted); font-weight: 500; }
+  th { white-space: normal; vertical-align: bottom; }
+  table.text td { white-space: normal; text-align: left; }
+  th:first-child, td:first-child { text-align: left; }
+  tr:last-child td { border-bottom: none; }
+  tr.best td { font-weight: 600; }
+  .chart { border: 1px solid var(--border); border-radius: 12px; padding: 8px; margin: 12px 0; }
+  .note { color: var(--muted); font-size: 13px; }
+  code, pre { font-family: Consolas, "SF Mono", monospace; font-size: 13px; }
+  pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow-x: auto; }
+  ul { padding-left: 20px; }
+  li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<main>
+<h1>Baseline test: LightGBM vs trivial rules, with a one-time holdout</h1>
+<div class="byline">Crypto AI · report generated 6 Oct 2026 · daily candles, BTC, ETH, BNB, SOL · 0.1% fee + 0.05% slippage per side</div>
+
+<p class="lead">The simple LightGBM model failed every stage. On the final holdout (Jan 2025 – Oct 2026, run once) it lost <b>−29.3%</b> with an AUC of <b>0.491</b>, below chance, while a one-line trend rule (hold when the price is above its 50-day average) made <b>+54.0%</b>. A follow-up check shows our main AI does not beat that trend rule either.</p>
+
+<div class="kpis">
+  <div class="kpi"><div class="label">Holdout: trend rule</div><div class="value">+54.0%</div><div class="sub">Sharpe 0.94, worst drop −28%</div></div>
+  <div class="kpi"><div class="label">Holdout: buy &amp; hold</div><div class="value">−9.4%</div><div class="sub">Sharpe 0.17, worst drop −62%</div></div>
+  <div class="kpi"><div class="label">Holdout: LightGBM</div><div class="value">−29.3%</div><div class="sub neg">AUC 0.491, −2.1% even with zero costs</div></div>
+  <div class="kpi"><div class="label">Our AI vs the trend rule</div><div class="value">50–53%</div><div class="sub">of 2022–2026 runs won (best AI strategies)</div></div>
+</div>
+
+<h2>How the test worked</h2>
+<p>Every choice was fixed in the script (<code>experiments/baseline_lightgbm.py</code>) before any result was seen.</p>
+<div class="table-wrap"><table class="text">
+<tr><th>Piece</th><th>Choice</th></tr>
+<tr><td>Model</td><td>LightGBM, fixed settings (300 trees, learning rate 0.03, 15 leaves, at least 100 samples per leaf), pooled across the four coins, no tuning</td></tr>
+<tr><td>Inputs</td><td>17 price and volume features: returns over 1–20 days, volatility, RSI, distance from the 20/50/200-day averages, range position, close location, volume z-score and ratio</td></tr>
+<tr><td>Target and trading</td><td>Is tomorrow's close higher? Long or cash, decided at each daily close</td></tr>
+<tr><td>Trivial rules</td><td>Buy &amp; hold; trend rule (hold when close &gt; 50-day average); momentum rule (hold when the 20-day return &gt; 0)</td></tr>
+<tr><td>Costs</td><td>0.1% fee + 0.05% slippage per side on every position change (0.3% per round trip)</td></tr>
+<tr><td>Development</td><td>2021–2023, retrained at each year start on all earlier data</td></tr>
+<tr><td>Validation</td><td>2024, used only to choose the buy threshold from 50%, 52% or 55% (chose 55%: Sharpe 0.62 vs 0.57 at 50%)</td></tr>
+<tr><td>Final holdout</td><td>1 Jan 2025 – 3 Oct 2026, run once; the script records the run and refuses a second one</td></tr>
+</table></div>
+<p class="note">Earlier experiments in this project had looked at 2025–2026, so the holdout is unseen by this model but not by the researcher. No choice in this test used it.</p>
+
+<h2>Results by stage (basket of the four coins)</h2>
+<div class="table-wrap"><table>
+<tr><th>Stage</th><th>LightGBM</th><th>Trend rule</th><th>Momentum rule</th><th>Buy &amp; hold</th><th>LightGBM AUC</th></tr>
+<tr><td>Development 2021–2023: return</td><td>+73%</td><td class="pos"><b>+1,479%</b></td><td>+654%</td><td>+712%</td><td rowspan="2">0.527</td></tr>
+<tr><td>Development: Sharpe</td><td>0.61</td><td><b>2.01</b></td><td>1.53</td><td>1.27</td></tr>
+<tr><td>Validation 2024: return</td><td>+16%</td><td>+41%</td><td>+27%</td><td class="pos"><b>+97%</b></td><td rowspan="2">0.513</td></tr>
+<tr><td>Validation: Sharpe</td><td>0.62</td><td>1.04</td><td>0.80</td><td><b>1.48</b></td></tr>
+<tr class="best"><td>Final holdout 2025–2026: return</td><td class="neg">−29.3%</td><td class="pos"><b>+54.0%</b></td><td class="pos">+11.3%</td><td class="neg">−9.4%</td><td rowspan="2">0.491</td></tr>
+<tr class="best"><td>Final holdout: Sharpe</td><td>−0.47</td><td><b>0.94</b></td><td>0.35</td><td>0.17</td></tr>
+</table></div>
+<p class="note">Each Sharpe is uncertain by about ±0.6 (development), ±1.0 (validation) and ±0.75 (holdout). LightGBM made about 62–68 round trips per coin per year, against about 10 for the trend rule, so it paid roughly 20% a year in costs.</p>
+
+<h2>Final holdout per coin</h2>
+<div class="table-wrap"><table>
+<tr><th>Coin</th><th>LightGBM</th><th>Trend rule</th><th>Momentum rule</th><th>Buy &amp; hold</th></tr>
+<tr><td>BTC</td><td class="neg">−39.4%</td><td class="pos"><b>+24.6%</b></td><td class="neg">−8.1%</td><td class="neg">−8.8%</td></tr>
+<tr><td>ETH</td><td class="neg">−49.7%</td><td class="pos"><b>+156.6%</b></td><td class="pos">+46.6%</td><td class="neg">−19.1%</td></tr>
+<tr><td>BNB</td><td class="neg">−26.0%</td><td class="pos"><b>+48.1%</b></td><td class="pos">+5.2%</td><td class="pos">+12.0%</td></tr>
+<tr><td>SOL</td><td class="neg">−10.6%</td><td class="neg"><b>−1.6%</b></td><td class="neg">−11.6%</td><td class="neg">−37.6%</td></tr>
+</table></div>
+<p>Costs are not what killed LightGBM. With zero costs it still lost 2.1% on the holdout, while the trend rule made +63.1%.</p>
+<div class="table-wrap"><table>
+<tr><th>Cost per side</th><th>LightGBM</th><th>Trend rule</th><th>Buy &amp; hold</th></tr>
+<tr><td>0% (no costs)</td><td class="neg">−2.1%</td><td class="pos">+63.1%</td><td class="neg">−9.1%</td></tr>
+<tr><td>0.075% (fees paid in BNB)</td><td class="neg">−16.8%</td><td class="pos">+58.5%</td><td class="neg">−9.2%</td></tr>
+<tr class="best"><td>0.15% (this test)</td><td class="neg">−29.3%</td><td class="pos">+54.0%</td><td class="neg">−9.4%</td></tr>
+<tr><td>0.3%</td><td class="neg">−49.0%</td><td class="pos">+45.4%</td><td class="neg">−9.6%</td></tr>
+</table></div>
+
+<h2>Follow-up: does our main AI beat the trend rule?</h2>
+<p>Earlier tests compared the AI only with buy &amp; hold. On the same 36 half-year runs (9 half-years × 4 coins, 2022–2026, 0.1% fee), the trend rule has the best average and the AI's best strategies beat it only about half the time.</p>
+<div class="table-wrap"><table>
+<tr><th>Strategy</th><th>Avg return per half-year</th><th>Median</th><th>Avg worst drop</th><th>Runs beating the trend rule</th></tr>
+<tr class="best"><td>Trend rule (close &gt; SMA50)</td><td class="pos"><b>+21.0%</b></td><td class="pos">+3.2%</td><td>−23.2%</td><td>–</td></tr>
+<tr><td>Next 3 days (our AI)</td><td class="pos">+18.4%</td><td class="pos">+7.7%</td><td>−30.6%</td><td>53%</td></tr>
+<tr><td>Next 1 day (our AI)</td><td class="pos">+12.2%</td><td class="pos">+4.9%</td><td>−31.5%</td><td>36%</td></tr>
+<tr><td>Smart (our AI, old 7% stop)</td><td class="pos">+10.4%</td><td class="neg">−0.7%</td><td><b>−22.5%</b></td><td>50%</td></tr>
+<tr><td>Buy &amp; hold</td><td class="pos">+16.1%</td><td class="pos">+12.2%</td><td>−42.2%</td><td>44%</td></tr>
+</table></div>
+
+<h2>What this means</h2>
+<ul>
+  <li><b>The AI's "shield" is mostly a trend filter.</b> Its smaller crashes and its wins in falling markets are roughly what a 50-day moving average gives on its own, with far less trading.</li>
+  <li><b>Machine learning adds little or nothing beyond that rule here.</b> As the brief said: if the baseline doesn't beat the trivial rules, news features or deep learning are unlikely to rescue it.</li>
+  <li><b>From now on, every strategy should be compared with the trend rule</b>, not only with buy &amp; hold, and any new idea has to beat it on data it never saw.</li>
+  <li><b>A sensible next test:</b> use the trend rule as the base and ask whether the AI can improve on it, for example by skipping the trend rule's buys when the AI is strongly bearish. That would be chosen on 2022–2024 and checked on 2025–2026.</li>
+</ul>
+<p class="note">Rerun development and validation with <code>.venv\Scripts\python experiments\baseline_lightgbm.py</code>. The final holdout has been used (<code>docs/backTestResult/baseline_holdout_used.json</code>) and the script will not run it again. Estimates, not financial advice.</p>
+</main>
+</body>
+</html>
