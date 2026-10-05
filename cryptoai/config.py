@@ -1,4 +1,6 @@
 """Central settings. Edit these to change what the AI tracks."""
+import os
+from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,5 +43,19 @@ FEE = 0.001  # 0.1% per side (Binance spot taker)
 ENTER_PROB = 0.55  # go long when P(up) rises above this
 EXIT_PROB = 0.48  # go flat when P(up) falls below this
 
-for d in (DATA_DIR, MODEL_DIR):
+LOG_DIR = ROOT / "logs"
+LIVE_STATUS = LOG_DIR / "live_status.json"
+
+for d in (DATA_DIR, MODEL_DIR, LOG_DIR):
     d.mkdir(exist_ok=True)
+
+
+@contextmanager
+def atomic(path):
+    """Yield a temporary path, then move it over `path` in one step.
+
+    The live service and the dashboard share these files; this stops either from reading a half-written one.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    yield tmp
+    os.replace(tmp, path)

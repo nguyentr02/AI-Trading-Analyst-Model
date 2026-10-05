@@ -97,9 +97,12 @@ def train(timeframe, refresh=True, min_auc=None):
     cols = feature_cols(ds)
     final = _new_model().fit(labeled[cols], labeled["y"])
 
-    joblib.dump({"model": final, "features": cols}, config.MODEL_DIR / f"model_{timeframe}.joblib")
-    oos.to_csv(config.MODEL_DIR / f"oos_{timeframe}.csv")
-    (config.MODEL_DIR / f"metrics_{timeframe}.json").write_text(json.dumps(metrics, indent=2))
+    with config.atomic(config.MODEL_DIR / f"model_{timeframe}.joblib") as tmp:
+        joblib.dump({"model": final, "features": cols}, tmp)
+    with config.atomic(config.MODEL_DIR / f"oos_{timeframe}.csv") as tmp:
+        oos.to_csv(tmp)
+    with config.atomic(config.MODEL_DIR / f"metrics_{timeframe}.json") as tmp:
+        tmp.write_text(json.dumps(metrics, indent=2))
     return metrics
 
 

@@ -63,7 +63,8 @@ def _merge_save(df, new, path):
     df = pd.concat([df, new]) if not df.empty else new
     df = df[~df.index.duplicated(keep="last")].sort_index()
     df.index = df.index.as_unit("ms")
-    df.to_csv(path)
+    with config.atomic(path) as tmp:
+        df.to_csv(tmp)
     return df
 
 

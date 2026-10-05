@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from cryptoai import backtest, config, data, market, model, portfolio, signals
+from cryptoai import backtest, config, data, live, market, model, portfolio, signals
 
 ASSETS = config.ROOT / "assets"
 st.set_page_config(page_title="Crypto AI", page_icon=str(ASSETS / "icon.svg"), layout="wide")
@@ -32,9 +32,15 @@ def style(fig, height):
     return fig
 
 
-@st.cache_data(ttl=300, show_spinner="Fetching latest candles…")
-def get_signals(tf):
+@st.cache_data(ttl=300, max_entries=8, show_spinner="Fetching latest candles…")
+def get_signals(tf, model_version=None):
+    """`model_version` (the model's training time) makes a retrained model show up immediately."""
     return signals.current(tf)
+
+
+def model_version(tf):
+    m = model.load_metrics(tf)
+    return m["trained_at"] if m else None
 
 
 @st.cache_resource
@@ -160,7 +166,34 @@ def page_market():
 def page_signals():
     st.title("Signals")
     tf, _ = controls(symbol=False)
-    sig = get_signals(tf)
+    signal_board(tf)
+
+
+def service_badge():
+    """Whether the always-on learning service is running, from the status file it updates every minute."""
+    s = live.load_status()
+    if s is None:
+        st.badge("Live learning service not running", icon=":material/cloud_off:", color="gray",
+                 help="Start it with live.bat, or set it up to start automatically with setup_autostart.ps1.")
+        return
+    age = (pd.Timestamp.now(tz="UTC") - pd.Timestamp(s["updated"])).total_seconds()
+    if age > 180:
+        st.badge(f"Live learning service offline since {s['updated'][:16].replace('T', ' ')} UTC",
+                 icon=":material/cloud_off:", color="red")
+    elif s["state"] == "listening":
+        last = max(s.get("last_learn_4h", ""), s.get("last_learn_1d", ""))
+        st.badge(f"Live learning: listening for candle closes · last learned {last[11:16]} UTC",
+                 icon=":material/sensors:", color="green",
+                 help="The service retrains and updates signals within seconds of every 4h and 1d candle close.")
+    else:
+        st.badge(f"Live learning: {s['state']}", icon=":material/sync:", color="orange")
+
+
+@st.fragment(run_every=60)
+def signal_board(tf):
+    """Re-checks every minute so a signal from a just-closed candle appears without reloading the page."""
+    service_badge()
+    sig = get_signals(tf, model_version(tf))
     cols = st.columns(len(sig))
     for c, r in zip(cols, sig.itertuples()):
         c.metric(r.symbol, f"{r.price:,.2f}" if r.price >= 1 else f"{r.price:.5f}", SIGNAL_ICON[r.signal],
@@ -311,7 +344,8 @@ def page_portfolio():
             total, cost = pv["value"].sum(), (pv["amount"] * pv["avg_cost"]).sum()
             a.metric("Total value", f"${total:,.2f}")
             b.metric("Unrealised P&L", f"${total - cost:,.2f}", f"{(total - cost) / cost:+.1%}" if cost else None)
-            sig_map = dict(zip(get_signals(tf)["symbol"], get_signals(tf)["signal"]))
+            sig = get_signals(tf, model_version(tf))
+            sig_map = dict(zip(sig["symbol"], sig["signal"]))
             pv["AI signal"] = pv["symbol"].map(sig_map).fillna("not tracked")
             c.metric("Positions flagged BEARISH", int((pv["AI signal"] == "BEARISH").sum()))
             st.dataframe(pv.style.format({"price": "{:,.4f}", "value": "${:,.2f}", "pnl": "${:,.2f}",

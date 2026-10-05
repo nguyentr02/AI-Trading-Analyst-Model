@@ -1,4 +1,4 @@
-"""Command line: python -m cryptoai [train|signals|backtest|market|daily]"""
+"""Command line: python -m cryptoai [train|signals|backtest|market|daily|live]"""
 import argparse
 
 from . import backtest, config, market, model, signals
@@ -12,6 +12,7 @@ def main():
     sub.add_parser("backtest", help="print backtest results from the last training run")
     sub.add_parser("market", help="print live price, volume and market cap")
     sub.add_parser("daily", help="daily learning: fetch new candles, retrain, keep the better model, log signals")
+    sub.add_parser("live", help="always-on service: learn and signal at every candle close, catch up after downtime")
     args = ap.parse_args()
 
     if args.cmd == "train":
@@ -19,6 +20,11 @@ def main():
             print(f"Training {tf} ...")
             for k, v in model.train(tf).items():
                 print(f"  {k}: {v}")
+
+    elif args.cmd == "live":
+        from .live import LiveService
+
+        LiveService().run()
 
     elif args.cmd == "daily":
         from datetime import datetime, timezone

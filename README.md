@@ -1,54 +1,238 @@
 # Crypto AI: signals and tracker
 
-Downloads Binance candles, trains a model to estimate the chance price rises over the next
-day (4h model) or 3 days (1d model), backtests it honestly, and shows everything in a dashboard
-alongside your holdings. It **does not place trades**. You make every decision.
+An AI that watches **BTC, ETH, BNB and SOL** on Binance, learns from their price history, and estimates
+the chance each coin goes up:
 
-## Setup
+- **4h model:** chance the price is higher in 1 day (6 four-hour candles from now).
+- **1d model:** chance the price is higher in 3 days.
+
+It streams live prices, retrains itself within seconds of every candle close, and shows everything in a
+dashboard alongside your holdings. It **does not place trades**. You make every decision.
+
+Everything runs on your own computer. It uses Binance's free public data (no account or API key) and does
+not need Claude or any other AI service to run or learn.
+
+---
+
+## Part 1: Set it up (once per PC)
+
+### 1. Install the tools
+
+1. **Python 3.14** from [python.org](https://www.python.org/downloads/). In the installer, tick
+   **"Add python.exe to PATH"**.
+2. **Git** from [git-scm.com](https://git-scm.com/download/win). The default options are fine.
+
+### 2. Download the code and install
+
+Open **PowerShell** (Start menu, type "PowerShell"), then run these one at a time:
 
 ```
+cd $HOME\Documents
+git clone https://github.com/nguyentr02/AI-Trading-Analyst-Model.git
+cd AI-Trading-Analyst-Model
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-train.bat
 ```
 
-Training downloads the price history into `data/` and writes the models to `models/`.
+### 3. Train the AI for the first time
 
-## Use it
+Double-click **`train.bat`** in the folder. It downloads the price history since 2019 and trains both
+models. The first run takes a few minutes; it prints the results and waits for a key press when done.
 
-| Double-click | What it does |
+### 4. Make it run automatically
+
+Choose one.
+
+**A. On an always-on (24/7) PC** — recommended for the PC that does the learning:
+
+1. Right-click the Start button > **Terminal (Admin)** or **Windows PowerShell (Admin)**.
+2. Run (change the path if you cloned somewhere else):
+   ```
+   cd $HOME\Documents\AI-Trading-Analyst-Model
+   powershell -ExecutionPolicy Bypass -File setup_autostart.ps1 -AtStartup
+   ```
+3. Turn off sleep: **Settings > System > Power > Screen and sleep > "When plugged in, put my device to
+   sleep after" = Never**. The screen turning off is fine.
+
+The AI now starts when Windows boots, even if nobody logs in, so it survives Windows Update restarts.
+
+**B. On an everyday PC** (runs while you are logged in), in a normal PowerShell:
+
+```
+powershell -ExecutionPolicy Bypass -File setup_autostart.ps1
+```
+
+Either way, two things now run in the background with no window:
+
+| Background task | What it does | Log file |
+|---|---|---|
+| **Crypto AI live service** | Learns from every closed candle and updates the signals | `logs\live.log` |
+| **Crypto AI dashboard** | The dashboard website at http://localhost:8501 | `logs\dashboard.log` |
+
+If either one crashes, it restarts itself after 30 seconds.
+
+**C. No auto-start:** double-click `dashboard.bat` to open the dashboard and `live.bat` to run the learning
+service. They stop when you close them or shut down.
+
+> Use only one of A, B or C on a PC. If auto-start is set up, don't also double-click `dashboard.bat` or
+> `live.bat`, or you get two copies running.
+
+---
+
+## Part 2: Use it
+
+### Open the dashboard
+
+Go to **http://localhost:8501** in your browser.
+
+From your phone or another computer on the **same Wi-Fi**, use `http://<PC-IP>:8501`. To find the PC's IP,
+run `ipconfig` on it and look for "IPv4 Address" (for example `192.168.1.157`). The first time, Windows
+Firewall may ask whether to allow Python; allow it on private networks.
+
+### The pages
+
+| Page | What you see |
 |---|---|
-| `dashboard.bat` | Opens the dashboard at http://localhost:8501 |
-| `train.bat` | Downloads new data, retrains, prints backtest (do it weekly or monthly) |
-| `check_signals.bat` | Logs current signals and any changes to `signals_output.txt` |
-| `daily.bat` | Daily learning: fetches new candles, retrains, keeps the new model only if it still has an edge, logs signals to `logs/daily.log` |
+| **Market** | Live prices updating every second, 24h change, high/low, volume, market cap, supply, all-time high |
+| **Signals** | The AI's current call for each coin, and a log of recent signal changes. The badge at the top shows whether the live learning service is running |
+| **Chart** | Candlestick chart with the model's P(up) underneath |
+| **Backtest** | How the strategy would have done on data the model had not seen, model accuracy, **Learning history**, and a **Retrain models** button |
+| **Portfolio** | Enter your holdings (symbol like `BTC/USDT`, amount, average cost) to see value, profit/loss and the AI's signal for each |
 
-The AI learns every day: `schedule_daily.ps1` registers `daily.bat` with Windows Task Scheduler to run at
-00:10 UTC (07:10 in UTC+7), right after Binance's daily candle closes. If the PC is off, it runs when it
-is next on. Every run is recorded in `models/training_log.csv` and shown under **Backtest > Learning history**.
-Remove it with `powershell -ExecutionPolicy Bypass -File schedule_daily.ps1 -Remove`.
+Use the **Timeframe** switch (4h or 1d) at the top of Signals, Chart and Backtest.
 
-To get alerts automatically, schedule `check_signals.bat` with Windows Task Scheduler to run
-every 4 hours, a few minutes after each Binance 4h candle closes (00:00, 04:00, 08:00 … UTC).
+### Reading a signal
 
-Command line: `.venv\Scripts\python -m cryptoai [train|signals|backtest|market|daily]`
+- **P(up)** is the model's estimated chance the price is higher at the end of the horizon
+  (1 day for 4h, 3 days for 1d).
+- **BULLISH** when P(up) is 55% or more, **BEARISH** at 48% or less, **NEUTRAL** in between.
+- A new 4h signal is ready a few seconds after each 4h candle closes:
+  00:00, 04:00, 08:00, 12:00, 16:00 and 20:00 UTC (07:00, 11:00, 15:00, 19:00, 23:00, 03:00 in Vietnam, UTC+7).
+  The 1d signal updates once a day at 00:00 UTC.
+- The Signals page refreshes itself every minute, so you don't need to reload.
 
-## How it works
+**How much to trust it:** the model is right about 52% of the time. That is a small edge, which is normal
+for honest price prediction. The **4h model** has beaten a coin flip in every year since 2021 and passed a
+permutation test (see `docs/research/neurotrader-methods.md`). The **1d model** has not: it did well in 2022 and
+2025 but was no better than chance in 2023–2024. Trust 4h signals more than 1d ones, treat every signal as
+one input among several, and never risk money you can't afford to lose.
 
-- `cryptoai/data.py`: public Binance data, cached in `data/`. No API key needed. Spot candles with taker-buy
-  volume and trade count, plus futures funding rates and premium index (downloaded but currently unused by the
-  model, see `UNUSED_FEATURES` in `config.py`).
-- `cryptoai/features.py`: about 40 inputs. Each coin's own chart (returns, RSI, MACD, EMA distance, Bollinger,
-  ATR, volatility, volume, long-term trend, distance from recent high, day and hour) plus market context:
-  what BTC is doing, and each coin's strength against BTC and the other tracked coins.
+### How it learns
+
+The live service stays connected to Binance. Each time a candle closes it:
+
+1. downloads the final data,
+2. retrains the model on everything since 2019 up to that candle,
+3. tests the new model on months it didn't train on, and keeps it only if it still beats a coin flip
+   (otherwise it keeps the previous model),
+4. logs the new signals.
+
+If the PC was off or the internet was down, it downloads everything it missed when it comes back and learns
+from it before continuing. Nothing is skipped.
+
+---
+
+## Part 3: Look after it
+
+### Check it is healthy
+
+- **Signals page badge:**
+  - green "Live learning: listening": all good.
+  - orange: catching up or reconnecting, usually fine for a minute.
+  - red "offline since ...": the service stopped. See Troubleshooting.
+- **Backtest > Learning history:** one row per retrain. Many **REJECTED** rows in a row mean the market has
+  changed in a way the model can't handle; worth a closer look.
+- **`logs\live.log`:** what the service did and every signal change (lines marked `<-- CHANGED`).
+
+### Update to a newer version
+
+When the code on GitHub has been improved, in PowerShell in the project folder:
+
+```
+git pull
+.venv\Scripts\pip install -r requirements.txt
+powershell -ExecutionPolicy Bypass -File setup_autostart.ps1 -AtStartup
+```
+
+On an everyday PC, leave out `-AtStartup` and use a normal PowerShell. The last line restarts both background
+tasks so they use the new code. On a 24/7 PC, it needs an Admin PowerShell, as in setup.
+
+### Stop it
+
+| To | Do |
+|---|---|
+| Stop it (and its auto-start) | `powershell -ExecutionPolicy Bypass -File setup_autostart.ps1 -Remove` (Admin PowerShell if you used `-AtStartup`) |
+| Start it again | Run the setup command from step 4 again. It catches up on anything it missed while stopped |
+| Restart it | Run the setup command from step 4 again. It stops the running copy first |
+
+Don't stop it with **End** in Task Scheduler: that only stops the hidden launcher, and the AI keeps running.
+
+### Moving to another PC
+
+Repeat Part 1 on the new PC. Price data and models are rebuilt by `train.bat`. Your holdings are in
+`portfolio.json`, which is not on GitHub for privacy; copy that file across if you want them.
+
+---
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| Browser says **"Connection error"** or the page won't load | The dashboard isn't running. Run the setup command from step 4 again, or double-click `dashboard.bat`. Check `logs\dashboard.log` for errors |
+| Signals badge is **red / offline** | Look at the end of `logs\live.log`. If the service stopped, run the setup command again. It catches up on anything it missed |
+| `logs\live.log` says **"no connection to Binance"** | The internet is down or Binance is unreachable. It retries by itself and catches up once the connection is back |
+| Binance is **blocked** where you are | The data comes from `api.binance.com` and `stream.binance.com`. If they are blocked in your country, the AI can't get data |
+| **"No model yet"** on the dashboard | Run `train.bat` once |
+| **"python is not recognized"** | Python isn't on PATH. Reinstall Python with "Add python.exe to PATH" ticked |
+| Dashboard opens on **port 8502** instead of 8501 | Another copy is already running on 8501. Use that one, or stop the extra copy |
+| PC **sleeps** and the AI stops | Set sleep to Never (step 4A). When the PC wakes up, the AI catches up |
+
+---
+
+## Reference
+
+### Files you can double-click
+
+| File | What it does |
+|---|---|
+| `train.bat` | Downloads data, retrains both models, prints the backtest |
+| `dashboard.bat` | Opens the dashboard in your browser (manual use) |
+| `live.bat` | Runs the learning service (manual use; auto-start runs it for you) |
+| `daily.bat` | One learning run, logged to `logs\daily.log` |
+| `check_signals.bat` | Logs the current signals to `signals_output.txt` |
+
+### Command line
+
+```
+.venv\Scripts\python -m cryptoai train      # download data, retrain, print accuracy
+.venv\Scripts\python -m cryptoai backtest   # print backtest results per coin
+.venv\Scripts\python -m cryptoai signals    # print current signals and log changes
+.venv\Scripts\python -m cryptoai market     # print live price, volume, market cap
+.venv\Scripts\python -m cryptoai daily      # one learning run
+.venv\Scripts\python -m cryptoai live       # always-on learning service
+```
+
+### Folders
+
+| Folder | Contents | On GitHub? |
+|---|---|---|
+| `cryptoai/` | The AI's code | Yes |
+| `data/` | Downloaded price, funding and premium history | No, rebuilt by training |
+| `models/` | Trained models, accuracy, learning history | No, rebuilt by training |
+| `logs/` | `live.log`, `dashboard.log`, `daily.log`, service status | No |
+| `docs/research/` | Research notes behind the model's design | Yes |
+
+### How it works (for developers)
+
+- `cryptoai/data.py`: public Binance data, cached in `data/`. Spot candles with taker-buy volume and trade
+  count, plus futures funding rates and premium index (downloaded but currently unused by the model, see
+  `UNUSED_FEATURES` in `config.py`).
+- `cryptoai/features.py`: about 40 inputs. Each coin's own chart (returns, RSI, MACD, EMA distance,
+  Bollinger, ATR, volatility, volume, long-term trend, distance from recent high, day and hour) plus market
+  context: what BTC is doing, and each coin's strength against BTC and the other tracked coins.
 - `cryptoai/model.py`: gradient-boosted trees, one model per timeframe, trained on all coins pooled.
   Evaluated **walk-forward**: each test period is predicted by a model trained only on earlier data.
+- `cryptoai/live.py`: the always-on service (Binance kline WebSocket, catch-up, retrain at each candle close).
+- `cryptoai/market.py`: live prices (Binance WebSocket) and market data (CoinGecko) for the Market page.
 - `cryptoai/backtest.py`: long-or-flat with 0.1% fee per side, compared with buy and hold.
-- `cryptoai/config.py`: coins, timeframes, horizon, thresholds. Edit here.
-
-## Read this before trusting it
-
-Out-of-sample accuracy is about 52% (AUC about 0.53). That is a small edge, which is normal
-for honest price prediction. Anyone who shows you 70%+ is usually leaking future data into the test.
-Backtest results differ a lot between coins and are partly luck. Treat signals as one input,
-and never risk money you can't afford to lose.
+- `cryptoai/config.py`: coins, timeframes, horizons, thresholds. Edit here.
