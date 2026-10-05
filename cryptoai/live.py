@@ -114,6 +114,8 @@ class LiveService:
             self.status["last_preview"] = _now()
             if paper.is_open():  # the paper AI may trade at any moment on the live readings
                 done = paper.step_ai_live(live_now)
+                shock = paper.step_shock()
+                done = pd.concat([d for d in (done, shock) if len(d)]) if len(done) or len(shock) else done
                 for r in done.itertuples() if len(done) else []:
                     log(f"    PAPER AI (live): {r.side} {r.symbol} {r.quantity:.6f} at {r.price:,.2f} "
                         f"(${r.total:,.2f}) - {r.reason}")

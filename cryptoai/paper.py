@@ -243,7 +243,8 @@ def step_trend(prices=None):
 def value(acct, prices):
     """Current value of the AI account, the trend benchmark and buy & hold."""
     def sleeves(name):
-        return sum(sl["cash"] + sl["qty"] * prices[s] for s, sl in acct["accounts"][name].items())
+        return sum(sl["cash"] + (sl["qty"] + (sl.get("shock") or {}).get("qty", 0.0)) * prices[s]
+                   for s, sl in acct["accounts"][name].items())
     hold = sum(h["qty"] * prices[s] for s, h in acct["hold"].items())
     return {"ai": sleeves("ai"), "trend": sleeves("trend"), "hold": hold}
 
@@ -279,3 +280,47 @@ def _trade_count():
 
 def _trades_since(n):
     return trades().iloc[n:]
+
+
+# ---------- shock dip-buy (experiments/shock_dip_buy.py) ----------
+# Tested 2026-10-06: buying when a coin closes 10%+ below its close an hour earlier (on 15-minute closes) and
+# selling 4 hours later beat random timing in 2019-2021 (68 trades, +5.2% net each) and 2025-2026 (6 trades),
+# after being chosen on 2022-2024. The size (up to half the coin's sleeve, from its cash) is a judgement.
+SHOCK_DROP, SHOCK_HOLD, SHOCK_SIZE = 0.10, pd.Timedelta("4h"), 0.5
+
+
+def step_shock(prices=None):
+    """Check each coin's latest closed 15-minute bars for a shock drop; close shock lots after 4 hours."""
+    acct = load()
+    if acct is None:
+        return []
+    before = _trade_count()
+    now = pd.Timestamp.now(tz="UTC")
+    prices = prices or data.prices(config.SYMBOLS)
+    checked = acct.setdefault("shock_checked", {})
+    for sym, sl in acct["accounts"]["ai"].items():
+        lot = sl.get("shock")
+        if lot and now >= pd.Timestamp(lot["sell_at"]):
+            fill = prices[sym] * (1 - SLIPPAGE)
+            proceeds = lot["qty"] * fill * (1 - FEE)
+            sl["cash"] += proceeds
+            _log_trade("ai", sym, "SELL", fill, lot["qty"], lot["qty"] * fill,
+                       f"shock dip-buy exit after 4h ({proceeds / lot['cost'] - 1:+.1%})", sl["cash"])
+            sl["shock"] = None
+        bars = data.drop_open_candle(data.latest(sym, "15m", limit=8), "15m")["close"]
+        bar_close = str(bars.index[-1] + pd.Timedelta("15min"))
+        if checked.get(sym) == bar_close:
+            continue  # this 15-minute close was already checked
+        checked[sym] = bar_close
+        drop = bars.iloc[-1] / bars.iloc[-5] - 1
+        if drop <= -SHOCK_DROP and not sl.get("shock"):
+            spend = min(sl["cash"], SHOCK_SIZE * (sl["cash"] + sl["qty"] * prices[sym]))
+            if spend >= config.MIN_TRADE_USDT:
+                fill = prices[sym] * (1 + SLIPPAGE)
+                qty = spend * (1 - FEE) / fill
+                sl["cash"] -= spend
+                sl["shock"] = {"qty": qty, "cost": spend, "sell_at": str(now + SHOCK_HOLD)}
+                _log_trade("ai", sym, "BUY", fill, qty, spend, f"shock dip-buy: {drop:+.1%} in 1 hour, sell in 4h",
+                           sl["cash"])
+    _save(acct)
+    return _trades_since(before)

@@ -221,6 +221,10 @@ on that page). The balance is split into one sleeve per coin (for $1,000: $250 e
   4h close on the confirmed signals, and in between on the live readings once an action has held for 10
   minutes (each coin then waits an hour). Those two guards stop a reading that hovers around a threshold
   from trading back and forth; they are a judgement and are not backtested.
+- **Crash buying:** if a coin closes 10% or more below where it was an hour earlier (checked on every
+  15-minute close), the AI buys with up to half of that coin's sleeve and sells 4 hours later. Tested in
+  `experiments/shock_dip_buy.py`: chosen on 2022-2024, it beat random timing in 2019-2021 (68 trades, +5.2%
+  net each) and 2025-2026 (6 trades). It is rare: a few times a year at most.
 - **Benchmarks** run beside it from the same start: buy & hold, and the 50-day trend rule (checked daily).
 - **Fills** use the live Binance price with a 0.1% fee and 0.05% slippage. Nothing real is bought or sold.
 - **Everything is saved** in the `paper` folder (kept off GitHub): `account.json` (balances and positions),

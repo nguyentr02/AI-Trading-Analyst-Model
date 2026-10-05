@@ -976,7 +976,8 @@ def paper_dashboard():
                f"sleeve per coin. The AI trades with the Smart rules at any moment: at every 4h close on the "
                f"confirmed signals, and between closes on the live readings once an action has held for "
                f"{paper.CONFIRM_MINUTES} minutes (each coin then waits {paper.COOLDOWN_MINUTES} minutes; these two "
-               f"guards are not backtested). Fills at the live Binance price with {acct['fee']:.1%} fee and "
+               f"guards are not backtested). It also buys sudden crashes: a fall of {paper.SHOCK_DROP:.0%}+ within an "
+               f"hour buys up to half that coin's sleeve and sells it 4 hours later (tested, see experiments). Fills at the live Binance price with {acct['fee']:.1%} fee and "
                f"{acct['slippage']:.2%} slippage. Nothing real is traded.")
 
     hero = st.container(horizontal=True, gap="medium", vertical_alignment="bottom")
@@ -1009,10 +1010,12 @@ def paper_dashboard():
     rows = []
     for sym, sl in acct["accounts"]["ai"].items():
         px = prices[sym]
-        val = sl["qty"] * px
-        rows.append({"Coin": coin_label(sym), "Amount": sl["qty"], "Avg cost": sl["cost"] / sl["qty"] if sl["qty"] else None,
-                     "Price": px, "Value": val, "P&L": val - sl["cost"] if sl["qty"] else None,
-                     "P&L %": val / sl["cost"] - 1 if sl["qty"] else None,
+        shock = sl.get("shock") or {}
+        qty, cost = sl["qty"] + shock.get("qty", 0.0), sl["cost"] + shock.get("cost", 0.0)  # incl. a shock dip-buy
+        val = qty * px
+        rows.append({"Coin": coin_label(sym), "Amount": qty, "Avg cost": cost / qty if qty else None,
+                     "Price": px, "Value": val, "P&L": val - cost if qty else None,
+                     "P&L %": val / cost - 1 if qty else None,
                      "Invested": val / (val + sl["cash"]) if val + sl["cash"] else 0,
                      "AI next 1 day": SIGNAL_ARROW[sig.loc[sym, "signal"]] + f" {sig.loc[sym, 'prob_up']:.0%}"})
     cash = sum(sl["cash"] for sl in acct["accounts"]["ai"].values())

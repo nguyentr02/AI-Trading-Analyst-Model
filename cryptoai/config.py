@@ -47,7 +47,7 @@ HISTORY_START = "2019-01-01T00:00:00Z"
 MIN_AUC = 0.505
 # How many feature sets and strategy variants have been compared so far (see docs/research/). The deflated
 # Sharpe ratio corrects for picking the best of these. Raise it whenever another variant is tried.
-TRIALS_TESTED = 14  # 8 + "Smart" + 2 stop-loss variants + meta-label filter + TA bundle + moon placebo
+TRIALS_TESTED = 20  # 8 + "Smart" + 2 stop-loss variants + meta-label filter + TA bundle + moon placebo + 6 shock dip-buy variants
 TRAINING_LOG = MODEL_DIR / "training_log.csv"
 
 # Trading assumptions used in the backtest.
