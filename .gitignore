@@ -9,3 +9,6 @@ signals_output.txt
 logs/
 reports/
 notify.json
+dashboard_auth.json
+auth_tokens.json
+tools/

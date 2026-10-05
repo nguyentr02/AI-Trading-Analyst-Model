@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-Period Strategy Test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+<style>
+  :root {
+    --bg: #ffffff; --surface: #f7f8f9; --text: #0a0b0d; --muted: #5b616e; --border: #dee1e7;
+    --accent: #0052ff; --good: #098551; --bad: #cf202f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0a0b0d; --surface: #16171a; --text: #ffffff; --muted: #8a919e; --border: #2a2c31;
+      --accent: #578bfa; --good: #27ad75; --bad: #f0616d;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0a0b0d; --surface: #16171a; --text: #ffffff; --muted: #8a919e; --border: #2a2c31;
+    --accent: #578bfa; --good: #27ad75; --bad: #f0616d;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 Inter, "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 40px 16px 64px; }
+  h1 { font-size: 32px; line-height: 1.2; margin: 0 0 6px; }
+  h2 { font-size: 21px; margin: 40px 0 10px; }
+  .byline { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+  .lead { font-size: 17px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 20px 0 8px; }
+  .kpi { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; background: var(--surface); }
+  .kpi .label { color: var(--muted); font-size: 13px; }
+  .kpi .value { font-size: 24px; font-weight: 600; }
+  .kpi .sub { font-size: 13px; }
+  .neg { color: var(--bad); } .pos { color: var(--good); }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; margin: 12px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { padding: 9px 12px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); }
+  th { background: var(--surface); color: var(--muted); font-weight: 500; }
+  th { white-space: normal; vertical-align: bottom; }
+  table.text td { white-space: normal; text-align: left; }
+  th:first-child, td:first-child { text-align: left; }
+  tr:last-child td { border-bottom: none; }
+  tr.best td { font-weight: 600; }
+  .chart { border: 1px solid var(--border); border-radius: 12px; padding: 8px; margin: 12px 0; }
+  .note { color: var(--muted); font-size: 13px; }
+  code, pre { font-family: Consolas, "SF Mono", monospace; font-size: 13px; }
+  pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow-x: auto; }
+  ul { padding-left: 20px; }
+  li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<main>
+<h1>Multi-period test: 9 half-years, all four coins</h1>
+<div class="byline">Crypto AI · report generated 5 Oct 2026 · Jan 2022 – Jul 2026 · $1,000 per coin per period · 0.1% fee per trade</div>
+
+<p class="lead">The AI works as a shield, not a booster. In half-years when a coin fell more than 15%, the AI strategies beat holding in <b>93–100% of runs</b>. When it rose more than 15%, they beat holding in only <b>12–31%</b>. Across all 36 runs, <b>Next 3 days</b> had the best average result (+18.4% per half-year) and <b>Smart</b> the smallest crashes (average worst drop −22.5% vs −42.2% for holding).</p>
+
+<div class="kpis">
+  <div class="kpi"><div class="label">Falling markets: holding</div><div class="value">−42.5%</div><div class="sub">average per half-year</div></div>
+  <div class="kpi"><div class="label">Falling markets: Smart</div><div class="value">−12.9%</div><div class="sub pos">beat holding in 14 of 14 runs</div></div>
+  <div class="kpi"><div class="label">Rising markets: holding</div><div class="value">+71.9%</div><div class="sub">average per half-year</div></div>
+  <div class="kpi"><div class="label">Rising markets: best AI</div><div class="value">+54.2%</div><div class="sub neg">Next 3 days; beat holding in 5 of 16</div></div>
+</div>
+
+<h2>Period by period</h2>
+<p>Each bar is the average over BTC, ETH, BNB and SOL for that half-year. The AI protected capital in 2022 and 2026, and fell behind in the 2023–2024 rally.</p>
+<div class="chart"><div style="height:440px; width:100%;">                            <div id="ce36dc4d-9911-4d59-9365-296e8bb2bcc4" class="plotly-graph-div" style="height:100%; width:100%;"></div>            <script>                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("ce36dc4d-9911-4d59-9365-296e8bb2bcc4")) {                    Plotly.newPlot(                        "ce36dc4d-9911-4d59-9365-296e8bb2bcc4",                        [{"hovertemplate":"%{y:+.1%}","marker":{"color":"#B5BAC3"},"name":"Buy & hold","x":["2022 H1","2022 H2","2023 H1","2023 H2","2024 H1","2024 H2","2025 H1","2025 H2","2026 H1"],"y":{"dtype":"f8","bdata":"zaLNDSlc5b+3MlQq8fbDv3vy\u002f0XykeI\u002fyhtCFnuk9T9li\u002fFUR03iP4Q\u002f+bPd2cw\u002fP3j\u002fTS9duL8wYvGW2P2gPxlAvFEIfNm\u002f"},"type":"bar"},{"hovertemplate":"%{y:+.1%}","marker":{"color":"#5B616E"},"name":"Next 3 days","x":["2022 H1","2022 H2","2023 H1","2023 H2","2024 H1","2024 H2","2025 H1","2025 H2","2026 H1"],"y":{"dtype":"f8","bdata":"Flrv+k8g4b9Ggl\u002fRzPLFP3vXqVKLQMk\u002fuqTIMun78D\u002fQYOS3F8nnP5CbmjNimqa\u002fo3nR4DAOyT9KNBFPPBHFP1RR2z6aC9O\u002f"},"type":"bar"},{"hovertemplate":"%{y:+.1%}","marker":{"color":"#0052FF"},"name":"Smart (old 7% stop)","x":["2022 H1","2022 H2","2023 H1","2023 H2","2024 H1","2024 H2","2025 H1","2025 H2","2026 H1"],"y":{"dtype":"f8","bdata":"4YcSaa14vL847p\u002f6U8yKPxgJ8dC+hdM\u002fNjJee4F54j8B\u002ftsJevnbP\u002f3ntfnUCLa\u002ffJIGI8xeor8Fc60q+GuwP0YSec8sZs2\u002f"},"type":"bar"}],                        {"template":{"data":{"histogram2dcontour":[{"type":"histogram2dcontour","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"choropleth":[{"type":"choropleth","colorbar":{"outlinewidth":0,"ticks":""}}],"histogram2d":[{"type":"histogram2d","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"heatmap":[{"type":"heatmap","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"contourcarpet":[{"type":"contourcarpet","colorbar":{"outlinewidth":0,"ticks":""}}],"contour":[{"type":"contour","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"surface":[{"type":"surface","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"mesh3d":[{"type":"mesh3d","colorbar":{"outlinewidth":0,"ticks":""}}],"scatter":[{"fillpattern":{"fillmode":"overlay","size":10,"solidity":0.2},"type":"scatter"}],"parcoords":[{"type":"parcoords","line":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterpolargl":[{"type":"scatterpolargl","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"bar":[{"error_x":{"color":"#2a3f5f"},"error_y":{"color":"#2a3f5f"},"marker":{"line":{"color":"#E5ECF6","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"bar"}],"scattergeo":[{"type":"scattergeo","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterpolar":[{"type":"scatterpolar","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"histogram":[{"marker":{"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"histogram"}],"scattergl":[{"type":"scattergl","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatter3d":[{"type":"scatter3d","line":{"colorbar":{"outlinewidth":0,"ticks":""}},"marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattermap":[{"type":"scattermap","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterternary":[{"type":"scatterternary","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattercarpet":[{"type":"scattercarpet","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"carpet":[{"aaxis":{"endlinecolor":"#2a3f5f","gridcolor":"white","linecolor":"white","minorgridcolor":"white","startlinecolor":"#2a3f5f"},"baxis":{"endlinecolor":"#2a3f5f","gridcolor":"white","linecolor":"white","minorgridcolor":"white","startlinecolor":"#2a3f5f"},"type":"carpet"}],"table":[{"cells":{"fill":{"color":"#EBF0F8"},"line":{"color":"white"}},"header":{"fill":{"color":"#C8D4E3"},"line":{"color":"white"}},"type":"table"}],"barpolar":[{"marker":{"line":{"color":"#E5ECF6","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"barpolar"}],"pie":[{"automargin":true,"type":"pie"}]},"layout":{"autotypenumbers":"strict","colorway":["#636efa","#EF553B","#00cc96","#ab63fa","#FFA15A","#19d3f3","#FF6692","#B6E880","#FF97FF","#FECB52"],"font":{"color":"#2a3f5f"},"hovermode":"closest","hoverlabel":{"align":"left"},"paper_bgcolor":"white","plot_bgcolor":"#E5ECF6","polar":{"bgcolor":"#E5ECF6","angularaxis":{"gridcolor":"white","linecolor":"white","ticks":""},"radialaxis":{"gridcolor":"white","linecolor":"white","ticks":""}},"ternary":{"bgcolor":"#E5ECF6","aaxis":{"gridcolor":"white","linecolor":"white","ticks":""},"baxis":{"gridcolor":"white","linecolor":"white","ticks":""},"caxis":{"gridcolor":"white","linecolor":"white","ticks":""}},"coloraxis":{"colorbar":{"outlinewidth":0,"ticks":""}},"colorscale":{"sequential":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"sequentialminus":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"diverging":[[0,"#8e0152"],[0.1,"#c51b7d"],[0.2,"#de77ae"],[0.3,"#f1b6da"],[0.4,"#fde0ef"],[0.5,"#f7f7f7"],[0.6,"#e6f5d0"],[0.7,"#b8e186"],[0.8,"#7fbc41"],[0.9,"#4d9221"],[1,"#276419"]]},"xaxis":{"gridcolor":"white","linecolor":"white","ticks":"","title":{"standoff":15},"zerolinecolor":"white","automargin":true,"zerolinewidth":2},"yaxis":{"gridcolor":"white","linecolor":"white","ticks":"","title":{"standoff":15},"zerolinecolor":"white","automargin":true,"zerolinewidth":2},"scene":{"xaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2},"yaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2},"zaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2}},"shapedefaults":{"line":{"color":"#2a3f5f"}},"annotationdefaults":{"arrowcolor":"#2a3f5f","arrowhead":0,"arrowwidth":1},"geo":{"bgcolor":"white","landcolor":"#E5ECF6","subunitcolor":"white","showland":true,"showlakes":true,"lakecolor":"white"},"title":{"x":0.05}}},"shapes":[{"line":{"color":"#8A919E","width":1},"type":"line","x0":0,"x1":1,"xref":"x domain","y0":0,"y1":0,"yref":"y"}],"title":{"text":"The AI lost less in 2022 and 2026, and lagged in the 2023–2024 rally","x":0.01},"margin":{"l":10,"r":10,"t":56,"b":10},"font":{"family":"Inter, Segoe UI, sans-serif","color":"#8A919E"},"legend":{"orientation":"h","y":-0.12},"yaxis":{"tickformat":"+.0%","gridcolor":"rgba(138,145,158,0.2)","side":"right","title":{"text":"Average return, 4 coins"}},"barmode":"group","height":440,"hovermode":"x unified","paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"rgba(0,0,0,0)"},                        {"displaylogo": false, "responsive": true}                    )                };            </script>        </div></div>
+
+<h2>Overall: 36 runs per strategy</h2>
+<div class="table-wrap"><table>
+<tr><th>Strategy</th><th>Avg return per half-year</th><th>Median</th><th>Runs in profit</th><th>Runs beating holding</th><th>Avg worst drop</th><th>Avg trades</th><th>Avg fees</th></tr>
+<tr class="best"><td>Next 3 days</td><td class="pos">+18.4%</td><td class="pos">+7.7%</td><td>61%</td><td>64%</td><td>−30.6%</td><td>11</td><td>$23</td></tr>
+<tr><td>Buy &amp; hold</td><td class="pos">+16.1%</td><td class="pos">+12.2%</td><td>53%</td><td>–</td><td>−42.2%</td><td>1</td><td>$2</td></tr>
+<tr><td>Next 1 day</td><td class="pos">+12.2%</td><td class="pos">+4.9%</td><td>53%</td><td>58%</td><td>−31.5%</td><td>47</td><td>$102</td></tr>
+<tr><td>Smart (with the old 7% stop)</td><td class="pos">+10.4%</td><td class="neg">−0.7%</td><td>50%</td><td>56%</td><td><b>−22.5%</b></td><td>136</td><td>$71</td></tr>
+<tr><td>Combined (1 day + 4 hours)</td><td class="pos">+6.2%</td><td class="pos">+6.4%</td><td>53%</td><td>50%</td><td>−30.1%</td><td>62</td><td>$131</td></tr>
+<tr><td>Next 4 hours</td><td class="neg">−5.4%</td><td class="neg">−12.1%</td><td>28%</td><td>22%</td><td>−35.9%</td><td>120</td><td>$237</td></tr>
+</table></div>
+
+<h2>By market type</h2>
+<p>Each run is labelled by how much the coin itself moved over its half-year: falling (below −15%, 14 runs), sideways (6 runs) or rising (above +15%, 16 runs).</p>
+<div class="table-wrap"><table>
+<tr><th>Strategy</th><th>Falling: avg return</th><th>Falling: beat holding</th><th>Sideways: avg return</th><th>Sideways: beat holding</th><th>Rising: avg return</th><th>Rising: beat holding</th></tr>
+<tr><td>Buy &amp; hold</td><td class="neg">−42.5%</td><td>–</td><td class="pos">+4.0%</td><td>–</td><td class="pos"><b>+71.9%</b></td><td>–</td></tr>
+<tr><td>Next 3 days</td><td class="neg">−22.6%</td><td><b>100%</b></td><td class="pos"><b>+18.8%</b></td><td>67%</td><td class="pos">+54.2%</td><td>31%</td></tr>
+<tr><td>Next 1 day</td><td class="neg">−20.7%</td><td>93%</td><td class="pos">+11.9%</td><td>67%</td><td class="pos">+41.2%</td><td>25%</td></tr>
+<tr><td>Smart (old 7% stop)</td><td class="neg"><b>−12.9%</b></td><td><b>100%</b></td><td class="pos">+7.6%</td><td>50%</td><td class="pos">+31.8%</td><td>19%</td></tr>
+<tr><td>Combined</td><td class="neg">−19.8%</td><td>79%</td><td class="pos">+5.8%</td><td>67%</td><td class="pos">+29.2%</td><td>19%</td></tr>
+<tr><td>Next 4 hours</td><td class="neg">−40.3%</td><td>43%</td><td class="neg">−9.4%</td><td>0%</td><td class="pos">+26.7%</td><td>12%</td></tr>
+</table></div>
+<p class="note">Worst drops follow the same pattern: in falling markets Smart averaged −30.7% against −58.3% for holding.</p>
+
+<h2>What Smart's trades taught</h2>
+<p>All of Smart's trades were analysed by the rule that made them, using 2022–2024 to draw lessons and 2025–2026 to check them.</p>
+<div class="table-wrap"><table>
+<tr><th>Rule</th><th>Trades 2022–2024</th><th>Total profit</th><th>Winning</th><th>Price higher 1 day later</th><th>Same in 2025–2026?</th></tr>
+<tr><td>Stop-loss (7%)</td><td>228</td><td class="neg"><b>−$10,954</b></td><td>16%</td><td><b>60%</b></td><td class="neg">yes: −$4,377</td></tr>
+<tr><td>Sell all on a weak signal</td><td>749</td><td class="pos">+$7,199</td><td>74%</td><td>45%</td><td class="pos">yes: +$2,126</td></tr>
+<tr><td>Sell half (3-day view still up)</td><td>849</td><td class="pos">+$5,159</td><td>72%</td><td>50%</td><td class="pos">yes: +$865</td></tr>
+<tr><td>Take half profit at +10%</td><td>70</td><td class="pos">+$3,138</td><td><b>100%</b></td><td>57%</td><td class="pos">yes: +$581, 100% winning</td></tr>
+<tr><td>Buy-lower limit order</td><td>34 of 1,739 buys</td><td>–</td><td>–</td><td>53%</td><td>yes: 7 of 599 buys</td></tr>
+</table></div>
+<ul>
+  <li><b>The 7% stop-loss destroyed value.</b> Crypto routinely moves 7% within a normal day, so the stop sold near short-term bottoms: the price was higher a day later 60% of the time.</li>
+  <li><b>Taking half profit at +10% always worked</b>, in both phases.</li>
+  <li><b>The buy-lower limit orders almost never filled</b> (2% of buys), so they neither helped nor hurt.</li>
+  <li><b>Smart changes position too often:</b> 35% of its sells were followed by a re-buy within a day (usually at a lower price, but each round trip pays fees).</li>
+</ul>
+
+<h2>Testing the lesson: remove or widen the stop</h2>
+<p>Three versions of Smart were compared. The choice was made on 2022–2024 only; 2025–2026 then checked it on periods the choice never saw.</p>
+<div class="table-wrap"><table>
+<tr><th>Smart version</th><th>2022–2024: avg / median</th><th>2025–2026 check: avg / median</th><th>Check: beat holding</th><th>Check: avg worst drop</th></tr>
+<tr><td>7% stop (previous)</td><td>+18.9% / +13.5%</td><td class="neg">−6.7% / −6.8%</td><td>75%</td><td>−23.4%</td></tr>
+<tr><td>15% stop</td><td>+16.4% / +15.2%</td><td class="neg">−5.2% / −10.3%</td><td>83%</td><td>−27.1%</td></tr>
+<tr class="best"><td>No stop (adopted)</td><td><b>+20.4% / +22.9%</b></td><td><b>−0.6% / +2.3%</b></td><td><b>92%</b></td><td>−25.1%</td></tr>
+</table></div>
+<p><b>Adopted:</b> Smart now runs without a price stop and relies on its signal sells and half-profit-taking. It was best in the period used to choose it and still best in the check, by about 6 points per half-year, at the cost of a worst drop about 2 points deeper. In the calm 2025 test it now ends at $1,129.64 (+13.0%) instead of $1,077.51 (+7.8%).</p>
+
+<h2>How much to trust it</h2>
+<ul>
+  <li>Each single 6-month run is noisy (Sharpe uncertain by about ±1.4). The patterns above come from 36 runs per strategy, which is far more reliable than any one run.</li>
+  <li>The 2025–2026 check covers only three half-years (12 runs), mostly falling or sideways, so it confirms the stop lesson but cannot test it in a strong rally.</li>
+  <li>Eleven strategy variants have now been tried on this data; the dashboard's deflated Sharpe accounts for that.</li>
+</ul>
+
+<h2>Takeaways</h2>
+<ul>
+  <li><b>Use the AI for protection.</b> Its value is in falling and sideways markets; in a strong rally, holding usually wins.</li>
+  <li><b>Next 3 days is the best all-round signal</b>: highest average, most runs in profit, fewest trades and fees.</li>
+  <li><b>Smart is the most defensive choice</b>: the smallest crashes, now without the stop-loss that was costing it.</li>
+  <li><b>Never trade the Next 4 hours signal on its own</b>: it lost in 72% of runs.</li>
+  <li><b>Next idea to test</b>, the same way: stay invested when the long-term trend is clearly up, so the AI stops stepping out of rallies. It would be chosen on 2022–2024 and checked on 2025–2026.</li>
+</ul>
+<p class="note">Rerun any period with <code>.venv\Scripts\python -m cryptoai simulate BTC/USDT 2024-01-01 2024-07-01 --cash 1000</code>. Estimates with a small edge, not financial advice.</p>
+</main>
+</body>
+</html>

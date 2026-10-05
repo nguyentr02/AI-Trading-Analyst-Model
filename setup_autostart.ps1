@@ -9,8 +9,10 @@
 #   powershell -ExecutionPolicy Bypass -File setup_autostart.ps1              # start when you log in (no admin)
 #   powershell -ExecutionPolicy Bypass -File setup_autostart.ps1 -AtStartup   # start at boot, even with nobody
 #                                                                             # logged in (24/7 PC; run as admin)
-#   powershell -ExecutionPolicy Bypass -File setup_autostart.ps1 -Remove      # remove both tasks
-param([switch]$AtStartup, [switch]$Remove)
+#   powershell -ExecutionPolicy Bypass -File setup_autostart.ps1 -Remove      # remove all tasks
+#   add -Online to also put the dashboard on the internet through a Cloudflare tunnel ("Crypto AI online
+#   access", tunnel.bat); it needs a login first: .venv\Scripts\python -m cryptoai set-login
+param([switch]$AtStartup, [switch]$Remove, [switch]$Online)
 
 $tasks = @{
     "Crypto AI live service" = @{
@@ -22,8 +24,18 @@ $tasks = @{
         Info = "Crypto AI dashboard on http://localhost:8501."
     }
 }
+if ($Online) {
+    if (-not (Test-Path (Join-Path $PSScriptRoot "dashboard_auth.json"))) {
+        "No login set. Run: .venv\Scripts\python -m cryptoai set-login   (then run this script again)"
+        return
+    }
+    $tasks["Crypto AI online access"] = @{
+        Bat  = "tunnel.bat"
+        Info = "Puts the dashboard online via a Cloudflare tunnel and sends you the link. See logs\tunnel.log."
+    }
+}
 
-foreach ($old in @("Crypto AI daily learning") + $tasks.Keys) {
+foreach ($old in @("Crypto AI daily learning", "Crypto AI online access") + $tasks.Keys) {
     if (Get-ScheduledTask -TaskName $old -ErrorAction SilentlyContinue) {
         Stop-ScheduledTask -TaskName $old -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskName $old -Confirm:$false
@@ -33,9 +45,10 @@ foreach ($old in @("Crypto AI daily learning") + $tasks.Keys) {
 # Ending a task only stops the hidden launcher, not the batch loop and Python it started,
 # so stop those too. Otherwise a re-run would leave the old copy running beside the new one.
 $running = Get-CimInstance Win32_Process | Where-Object {
-    $_.CommandLine -match 'run_hidden\.vbs"? (live|dashboard_server)\.bat' -or
-    $_.CommandLine -match '/c "?(live|dashboard_server)\.bat' -or
-    $_.CommandLine -match '-m cryptoai live' -or
+    $_.CommandLine -match 'run_hidden\.vbs"? (live|dashboard_server|tunnel)\.bat' -or
+    $_.CommandLine -match '/c "?(live|dashboard_server|tunnel)\.bat' -or
+    $_.CommandLine -match '-m cryptoai (live|tunnel)' -or
+    $_.CommandLine -match 'cloudflared(\.exe)?"? tunnel' -or
     $_.CommandLine -match 'streamlit(\.exe)?"? run app\.py'
 }
 foreach ($p in $running) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }

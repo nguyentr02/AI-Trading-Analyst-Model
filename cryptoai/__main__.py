@@ -16,6 +16,9 @@ def main():
     sub.add_parser("daily", help="daily learning: fetch new candles, retrain, keep the better model, log signals")
     sub.add_parser("live", help="always-on service: learn and signal at every candle close, catch up after downtime")
     sub.add_parser("advice", help="buy / sell / hold advice for your saved portfolio")
+    login = sub.add_parser("set-login", help="set the username and password for opening the dashboard online")
+    login.add_argument("--username", help="asked for if left out")
+    sub.add_parser("tunnel", help="put the dashboard online via a Cloudflare tunnel and send you the link")
     sub.add_parser("notify-test", help="send a test alert to Windows and Zalo")
     zs = sub.add_parser("zalo-setup", help="connect your Zalo bot (message the bot from Zalo first)")
     zs.add_argument("token", help="bot token from bot.zaloplatforms.com")
@@ -45,6 +48,28 @@ def main():
             print(f"            {r.reason}")
             if isinstance(r.timing, str):
                 print(f"            Timing: {r.timing}")
+
+    elif args.cmd == "set-login":
+        import getpass
+
+        from . import auth
+
+        username = args.username or input("Username: ").strip()
+        first = getpass.getpass("Password (at least 10 characters): ")
+        if not username or len(first) < 10:
+            print("Username missing or password too short; nothing changed.")
+            return
+        if getpass.getpass("Type it again: ") != first:
+            print("The two passwords differ; nothing changed.")
+            return
+        auth.set_login(username, first)
+        print(f"Login set for {username}. Opening the dashboard over the internet now asks for it. "
+              "Anyone previously signed in has been signed out.")
+
+    elif args.cmd == "tunnel":
+        from . import tunnel
+
+        tunnel.run()
 
     elif args.cmd == "notify-test":
         from . import notify

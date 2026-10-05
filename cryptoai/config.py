@@ -47,7 +47,7 @@ HISTORY_START = "2019-01-01T00:00:00Z"
 MIN_AUC = 0.505
 # How many feature sets and strategy variants have been compared so far (see docs/research/). The deflated
 # Sharpe ratio corrects for picking the best of these. Raise it whenever another variant is tried.
-TRIALS_TESTED = 8
+TRIALS_TESTED = 11  # 8 + "Smart" (2026-10-05) + its 2 stop-loss variants
 TRAINING_LOG = MODEL_DIR / "training_log.csv"
 
 # Trading assumptions used in the backtest.
@@ -62,7 +62,11 @@ LIVE_STATUS = LOG_DIR / "live_status.json"
 NOTIFY_FILE = ROOT / "notify.json"  # alert settings incl. your Zalo bot token; kept off GitHub
 ADVICE_STATE = LOG_DIR / "advice_state.json"  # last advice per coin, so alerts fire only on changes
 MAX_PER_COIN = 0.30  # suggested buys keep any one coin to at most this share of the whole portfolio
-MIN_TRADE_USDT = 10.0  # ignore holdings and buys smaller than this (Binance's minimum order is about $5)
+MIN_TRADE_USDT = 10.0
+# Online access through a Cloudflare tunnel (see cryptoai/tunnel.py and cryptoai/auth.py).
+AUTH_FILE = ROOT / "dashboard_auth.json"  # username, salted password hash, token secret; kept off GitHub
+AUTH_SESSIONS_FILE = ROOT / "auth_tokens.json"  # IDs (hashed) of the refresh tokens still valid; kept off GitHub
+PUBLIC_URL_FILE = LOG_DIR / "public_url.txt"  # the tunnel's current public address  # ignore holdings and buys smaller than this (Binance's minimum order is about $5)
 
 for d in (DATA_DIR, MODEL_DIR, LOG_DIR):
     d.mkdir(exist_ok=True)

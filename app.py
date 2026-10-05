@@ -4,11 +4,103 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from cryptoai import advisor, backtest, config, data, live, market, metrics, model, notify, portfolio, signals
+from cryptoai import advisor, auth, backtest, config, data, live, market, metrics, model, notify, portfolio, signals
 
 ASSETS = config.ROOT / "assets"
 st.set_page_config(page_title="Crypto AI", page_icon=str(ASSETS / "icon.svg"), layout="wide")
 st.logo(str(ASSETS / "logo.svg"), icon_image=str(ASSETS / "icon.svg"), size="large")
+
+# ---------------- sign-in for online access ----------------
+# Keeps the refresh token in the browser (localStorage), so reloading the page doesn't sign you out.
+_TOKEN_STORE = st.components.v2.component(
+    "cryptoai_token_store",
+    html="<div></div>",
+    js="""
+export default function (component) {
+  const { data, setStateValue } = component
+  const KEY = "cryptoai_refresh_token"
+  if (!data) return
+  if (data.action === "set" && data.token) localStorage.setItem(KEY, data.token)
+  if (data.action === "clear") localStorage.removeItem(KEY)
+  if (data.action === "read") setStateValue("stored", localStorage.getItem(KEY) || "none")
+}
+""",
+)
+
+
+def token_store(action, token=None):
+    return _TOKEN_STORE(key="token_store", data={"action": action, "token": token}, height=0,
+                        on_stored_change=lambda: None)
+
+
+def online_request():
+    """True when the page came through the Cloudflare tunnel (it adds a CF-Connecting-IP header)."""
+    headers = st.context.headers
+    return bool(headers.get("Cf-Connecting-Ip") or headers.get("cf-connecting-ip"))
+
+
+def start_session(pair):
+    st.session_state["access_token"], st.session_state["refresh_token"] = pair
+
+
+def require_login():
+    """Sign-in for online access: username + password, then a 15-minute access token renewed with a 7-day
+    refresh token (see cryptoai/auth.py). Opening the dashboard on this PC or the home network skips it."""
+    if not online_request():
+        return
+    if not auth.is_set():
+        st.error("Online access is switched off: no login has been set on the PC running the AI.")
+        st.stop()
+    s = st.session_state
+
+    # 1. A valid access token in this session.
+    if auth.verify_access(s.get("access_token")):
+        token_store("set", s["refresh_token"])
+        return
+    # 2. Access token expired: renew it with the refresh token.
+    if s.get("refresh_token"):
+        pair = auth.refresh(s["refresh_token"])
+        s.pop("access_token", None), s.pop("refresh_token", None)
+        if pair:
+            start_session(pair)
+            token_store("set", pair[1])
+            return
+    # 3. A new visit: look for a refresh token saved in this browser.
+    if not s.get("token_checked"):
+        stored = token_store("read").stored
+        if stored is None:
+            st.caption("Checking sign-in…")
+            st.stop()
+        s["token_checked"] = True
+        pair = auth.refresh(stored) if stored != "none" else None
+        if pair:
+            start_session(pair)
+            st.rerun()
+    # 4. Sign in.
+    token_store("clear")
+    st.title("Crypto AI")
+    with st.form("sign_in", width=420):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        if st.form_submit_button("Sign in", type="primary"):
+            if auth.check_login(username, password):
+                start_session(auth.issue_tokens(username))
+                st.rerun()
+            st.error("Wrong username or password.")
+    st.stop()
+
+
+def page_sign_out():
+    auth.revoke(st.session_state.get("refresh_token"))
+    for k in ("access_token", "refresh_token"):
+        st.session_state.pop(k, None)
+    st.session_state["token_checked"] = True
+    token_store("clear")
+    st.title("Signed out")
+    st.caption("Reload the page to sign in again.")
+
+
+require_login()
 
 # Coinbase palette, matching .streamlit/config.toml. Plotly needs explicit colors per theme.
 if st.context.theme.type == "dark":
@@ -823,14 +915,14 @@ def portfolio_overview(holdings):
     )
 
 
-nav = st.navigation(
-    [
-        st.Page(page_market, title="Market", icon=":material/monitoring:", url_path="market", default=True),
-        st.Page(page_signals, title="Signals", icon=":material/bolt:", url_path="signals"),
-        st.Page(page_chart, title="Chart", icon=":material/candlestick_chart:", url_path="chart"),
-        st.Page(page_backtest, title="Backtest", icon=":material/history:", url_path="backtest"),
-        st.Page(page_portfolio, title="Portfolio", icon=":material/account_balance_wallet:", url_path="portfolio"),
-    ],
-    position="top",
-)
+pages = [
+    st.Page(page_market, title="Market", icon=":material/monitoring:", url_path="market", default=True),
+    st.Page(page_signals, title="Signals", icon=":material/bolt:", url_path="signals"),
+    st.Page(page_chart, title="Chart", icon=":material/candlestick_chart:", url_path="chart"),
+    st.Page(page_backtest, title="Backtest", icon=":material/history:", url_path="backtest"),
+    st.Page(page_portfolio, title="Portfolio", icon=":material/account_balance_wallet:", url_path="portfolio"),
+]
+if online_request():
+    pages.append(st.Page(page_sign_out, title="Sign out", icon=":material/logout:", url_path="sign-out"))
+nav = st.navigation(pages, position="top")
 nav.run()

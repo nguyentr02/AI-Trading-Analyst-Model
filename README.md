@@ -92,6 +92,37 @@ From your phone or another computer on the **same Wi-Fi**, use `http://<PC-IP>:8
 run `ipconfig` on it and look for "IPv4 Address" (for example `192.168.1.157`). The first time, Windows
 Firewall may ask whether to allow Python; allow it on private networks.
 
+### Open it from anywhere (online access)
+
+The 24/7 PC can put the dashboard on the internet through a free Cloudflare tunnel, protected by a login.
+No Cloudflare account, domain or router changes are needed.
+
+1. Set the login once, on the 24/7 PC, in PowerShell in the project folder:
+   ```
+   .venv\Scripts\python -m cryptoai set-login
+   ```
+   Enter a username and a password of at least 10 characters. Only a salted hash of the password is
+   saved (in `dashboard_auth.json`, kept off GitHub). Running it again changes the login and signs
+   everyone out.
+2. Add online access to the auto-start, in an **Admin** PowerShell:
+   ```
+   powershell -ExecutionPolicy Bypass -File setup_autostart.ps1 -AtStartup -Online
+   ```
+   This adds a third background task, **Crypto AI online access**. The first run downloads Cloudflare's
+   official `cloudflared` into the `tools` folder.
+3. The dashboard's address looks like `https://random-words.trycloudflare.com`. It changes whenever the
+   tunnel restarts, so every new address is sent to you as a Windows notification and on Zalo (set up Zalo
+   as in *Advice for your portfolio*). The current address is also in `logs\public_url.txt`.
+
+Opened through that address, the dashboard asks for the username and password. After signing in you get an
+**access token** (valid 15 minutes, renewed automatically) and a **refresh token** (valid 7 days, saved in
+your browser so reloading doesn't sign you out; it is swapped for a new one each time it is used). **Sign
+out** in the top bar cancels the refresh token. Opening the dashboard on the PC itself or on your home Wi-Fi
+needs no login.
+
+The tunnel refuses to start until a login is set, so the dashboard is never online unprotected. To take it
+offline again, run the setup command from step 2 without `-Online`.
+
 ### The pages
 
 | Page | What you see |
@@ -233,6 +264,8 @@ Repeat Part 1 on the new PC. Price data and models are rebuilt by `train.bat`. Y
 | **"python is not recognized"** | Python isn't on PATH. Reinstall Python with "Add python.exe to PATH" ticked |
 | Dashboard opens on **port 8502** instead of 8501 | Another copy is already running on 8501. Use that one, or stop the extra copy |
 | PC **sleeps** and the AI stops | Set sleep to Never (step 4A). When the PC wakes up, the AI catches up |
+| Online link says **"Online access is switched off"** | No login is set on the 24/7 PC: run `.venv\Scripts\python -m cryptoai set-login` |
+| Online link **stopped working** | The tunnel restarted and has a new address: check Zalo, the Windows notification, or `logs\public_url.txt`. `logs\tunnel.log` shows what happened |
 
 ---
 
@@ -258,6 +291,8 @@ Repeat Part 1 on the new PC. Price data and models are rebuilt by `train.bat`. Y
 .venv\Scripts\python -m cryptoai daily      # one learning run
 .venv\Scripts\python -m cryptoai live       # always-on learning service
 .venv\Scripts\python -m cryptoai advice     # buy / sell / hold advice for your portfolio
+.venv\Scripts\python -m cryptoai set-login  # set the login for online access
+.venv\Scripts\python -m cryptoai tunnel     # put the dashboard online now (Ctrl+C to stop)
 .venv\Scripts\python -m cryptoai simulate BNB/USDT 2026-01-01 2026-06-01 --cash 1000   # paper-trade a past period
 ```
 
