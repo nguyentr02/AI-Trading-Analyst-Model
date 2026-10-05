@@ -16,6 +16,12 @@ if st.context.theme.type == "dark":
 else:
     BLUE, GREY, UP, DOWN = "#0052FF", "#8A919E", "#098551", "#CF202F"
 GRID = "rgba(138,145,158,0.18)"
+# How far to trust each model, from walk-forward and permutation tests (see docs/research/).
+TRUST = {
+    "4h_next": "Most accurate, but it changes often: trading every change loses to fees, so use it to time "
+               "entries and exits. ",
+    "1d": "Weakest: no better than chance in 2023-2024, so treat it with extra caution. ",
+}
 SIGNAL_ICON = {"BULLISH": "▲ BULLISH", "BEARISH": "▼ BEARISH", "NEUTRAL": "● NEUTRAL"}
 
 
@@ -85,16 +91,17 @@ def get_candles(sym, tf):
 
 
 # Keep the timeframe and symbol selection when moving between pages.
-st.session_state.setdefault("tf", "1d")
+st.session_state.setdefault("model", "4h")
 st.session_state.setdefault("sym", config.SYMBOLS[0])
-for k in ("tf", "sym"):
+for k in ("model", "sym"):
     st.session_state[k] = st.session_state[k]
 
 
 def controls(symbol=True):
     """Timeframe and symbol pickers shown at the top of the model pages."""
-    c1, c2, _ = st.columns([1.2, 1.6, 4])
-    tf = c1.radio("Timeframe", config.TIMEFRAMES, key="tf", horizontal=True)
+    c1, c2, _ = st.columns([2.4, 1.6, 3])
+    tf = c1.segmented_control("Prediction", list(config.MODELS), key="model", required=True,
+                              format_func=lambda n: config.MODELS[n]["label"])
     sym = c2.selectbox("Symbol", config.SYMBOLS, key="sym") if symbol else None
     if model.load(tf) is None:
         st.error("No model yet. Run `python -m cryptoai train` or press **Retrain models** on the Backtest page.")
@@ -181,7 +188,7 @@ def service_badge():
         st.badge(f"Live learning service offline since {s['updated'][:16].replace('T', ' ')} UTC",
                  icon=":material/cloud_off:", color="red")
     elif s["state"] == "listening":
-        last = max(s.get("last_learn_4h", ""), s.get("last_learn_1d", ""))
+        last = max(s.get(f"last_learn_{n}", "") for n in config.MODELS)
         st.badge(f"Live learning: listening for candle closes · last learned {last[11:16]} UTC",
                  icon=":material/sensors:", color="green",
                  help="The service retrains and updates signals within seconds of every 4h and 1d candle close.")
@@ -198,10 +205,12 @@ def signal_board(tf):
     for c, r in zip(cols, sig.itertuples()):
         c.metric(r.symbol, f"{r.price:,.2f}" if r.price >= 1 else f"{r.price:.5f}", SIGNAL_ICON[r.signal],
                  delta_color="normal" if r.signal == "BULLISH" else "inverse" if r.signal == "BEARISH" else "off")
-        c.caption(f"P(up in {config.HORIZON[tf]} candles): **{r.prob_up:.0%}**")
+        c.caption(f"P(up, {config.MODELS[tf]['label'].lower()}): **{r.prob_up:.0%}**")
     st.caption(
         f"BULLISH when P(up) ≥ {config.ENTER_PROB:.0%}, BEARISH when ≤ {config.EXIT_PROB:.0%}. "
-        f"Based on the last closed {tf} candle. Signals are statistical estimates with a small edge, not "
+        f"Based on the last closed {config.MODELS[tf]['timeframe']} candle. "
+        + TRUST.get(tf, "")
+        + f"Signals are statistical estimates with a small edge, not "
         f"advice. Size positions so being wrong is affordable."
     )
     if config.SIGNAL_LOG.exists():
@@ -218,14 +227,15 @@ def signal_board(tf):
 def page_chart():
     st.title("Chart")
     tf, sym = controls()
-    df = get_candles(sym, tf)
+    ctf = config.MODELS[tf]["timeframe"]
+    df = get_candles(sym, ctf)
     lookback = st.slider("Candles shown", 60, 1000, 240, step=20)
     view = df.iloc[-lookback:]
-    raw = {s: get_candles(s, tf).iloc[-(lookback + 250):] for s in config.SYMBOLS}
+    raw = {s: get_candles(s, ctf).iloc[-(lookback + 250):] for s in config.SYMBOLS}
     prob = model.predict_history(raw, tf)[sym].reindex(view.index)
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28], vertical_spacing=0.04,
-                        subplot_titles=(f"{sym} · {tf}", "Model P(up)"))
+                        subplot_titles=(f"{sym} · {ctf}", f"Model P(up, {config.MODELS[tf]['label'].lower()})"))
     fig.add_trace(go.Candlestick(x=view.index, open=view.open, high=view.high, low=view.low, close=view.close,
                                  increasing_line_color=UP, decreasing_line_color=DOWN, name="Price",
                                  showlegend=False), row=1, col=1)
@@ -250,7 +260,8 @@ def page_backtest():
     c1, c2 = st.columns(2)
     enter = c1.slider("Enter when P(up) >", 0.50, 0.70, config.ENTER_PROB, 0.01)
     exit_ = c2.slider("Exit when P(up) <", 0.30, 0.55, config.EXIT_PROB, 0.01)
-    eq, s = backtest.run(g, tf, enter, min(exit_, enter))
+    ctf = config.MODELS[tf]["timeframe"]
+    eq, s = backtest.run(g, ctf, enter, min(exit_, enter))
     st_, bh = s["strategy"], s["buy_hold"]
 
     m = st.columns(5)
@@ -273,7 +284,7 @@ def page_backtest():
     history = model.load_log()
     if not history.empty:
         with st.expander("Learning history"):
-            h = history[history["timeframe"] == tf]
+            h = history[history["model"] == tf]
             fig = go.Figure(go.Scatter(x=h["trained_at"], y=h["oos_auc"], mode="lines+markers",
                                        line=dict(color=BLUE, width=2), name="Walk-forward AUC",
                                        hovertemplate="%{y:.4f}"))
@@ -288,7 +299,7 @@ def page_backtest():
     with st.expander("All symbols"):
         rows = []
         for sy, gg in oos.groupby("symbol"):
-            _, ss = backtest.run(gg, tf, enter, min(exit_, enter))
+            _, ss = backtest.run(gg, ctf, enter, min(exit_, enter))
             rows.append({"symbol": sy, "strategy": ss["strategy"]["total_return"],
                          "buy_hold": ss["buy_hold"]["total_return"],
                          "strategy_dd": ss["strategy"]["max_drawdown"], "buy_hold_dd": ss["buy_hold"]["max_drawdown"],
@@ -303,7 +314,7 @@ def model_status(tf):
     metrics = model.load_metrics(tf)
     if metrics:
         info.caption(
-            f"{tf} model trained {metrics['trained_at'][:16].replace('T', ' ')} UTC. "
+            f"{config.MODELS[tf]['label']} model trained {metrics['trained_at'][:16].replace('T', ' ')} UTC. "
             f"Out-of-sample accuracy **{metrics['oos_accuracy']:.1%}** "
             f"(coin-flip baseline {max(metrics['baseline_up_rate'], 1 - metrics['baseline_up_rate']):.1%}), "
             f"AUC **{metrics['oos_auc']:.3f}**."
@@ -311,7 +322,7 @@ def model_status(tf):
     if btn.button("Retrain models", icon=":material/refresh:", help="Downloads fresh data and retrains (≈1 min)",
                   width="stretch"):
         with st.spinner("Training…"):
-            for t in config.TIMEFRAMES:
+            for t in config.MODELS:
                 model.train(t)
         st.cache_data.clear()
         st.rerun()
@@ -320,7 +331,7 @@ def model_status(tf):
 # ---------------- portfolio ----------------
 def page_portfolio():
     st.title("Portfolio")
-    tf = st.session_state["tf"]
+    tf = st.session_state["model"]
     st.caption("Stored locally in portfolio.json. Symbols must be Binance pairs like BTC/USDT.")
     edited = st.data_editor(
         pd.DataFrame(portfolio.load(), columns=["symbol", "amount", "avg_cost"]),

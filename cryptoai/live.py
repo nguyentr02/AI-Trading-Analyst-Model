@@ -5,11 +5,13 @@
 1. Catch up: download every candle (and funding/premium value) missed while the service was down,
    retrain on it, and log fresh signals.
 2. Listen to Binance's kline WebSocket for all symbols and timeframes.
-3. When a candle closes for every symbol, retrain that timeframe's model on all data up to it
-   (kept only if it still passes MIN_AUC), then compute and log the new signal.
+3. When a candle closes for every symbol, retrain every model built on that timeframe on all data up
+   to it (kept only if it still passes MIN_AUC), then compute and log the new signals. A 4h close
+   retrains "4h_next" and "4h"; the daily close also retrains "1d".
 4. If the connection drops, reconnect and catch up again, so no candle is ever skipped.
 """
 import json
+import socket
 import time
 import traceback
 from datetime import datetime, timezone
@@ -26,7 +28,8 @@ WAIT_FOR_ALL = 20  # seconds to wait for every symbol's close message before pro
 HEARTBEAT = 60  # seconds between status file updates, so the dashboard can tell the service is alive
 
 
-NETWORK_ERRORS = (ccxt.NetworkError, requests.RequestException, OSError)
+# Problems reaching Binance. (Not all OSErrors: a PermissionError on a locked file is a different problem.)
+NETWORK_ERRORS = (ccxt.NetworkError, requests.RequestException, ConnectionError, TimeoutError, socket.gaierror)
 
 
 def log(msg):
@@ -43,7 +46,11 @@ class LiveService:
 
     # ---------- learning ----------
     def learn(self, tf, reason):
-        """Fetch new data, retrain, and log the signal for one timeframe."""
+        """Fetch new data, retrain, and log the signals for every model built on timeframe `tf`."""
+        for name in [n for n, s in config.MODELS.items() if s["timeframe"] == tf]:
+            self._learn_model(name, reason)
+
+    def _learn_model(self, tf, reason):
         t0 = time.time()
         m = model.train(tf, min_auc=config.MIN_AUC)  # downloads any missing candles first
         allsig, changed = signals.check_and_log([tf])

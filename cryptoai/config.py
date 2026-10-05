@@ -1,5 +1,6 @@
 """Central settings. Edit these to change what the AI tracks."""
 import os
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -17,7 +18,18 @@ COINGECKO_IDS = {"BTC/USDT": "bitcoin", "ETH/USDT": "ethereum", "BNB/USDT": "bin
 
 # How often the dashboard's Market tab redraws, in seconds. Binance pushes new prices once per second.
 LIVE_REFRESH = 1
+# Candle timeframes the models are built on. The live service learns when one of these closes.
 TIMEFRAMES = ["4h", "1d"]
+# Shorter charts whose recent patterns are fed to the models marked "intraday" below.
+INTRADAY_TIMEFRAMES = ["15m", "1h"]
+
+# The models. Each predicts whether price is higher `horizon` candles of `timeframe` from now.
+# "4h" and "1d" keep their original names so existing model files and logs stay valid.
+MODELS = {
+    "4h_next": {"timeframe": "4h", "horizon": 1, "label": "Next 4 hours", "intraday": True},
+    "4h": {"timeframe": "4h", "horizon": 6, "label": "Next 1 day", "intraday": True},
+    "1d": {"timeframe": "1d", "horizon": 3, "label": "Next 3 days", "intraday": False},
+}
 
 # Features that are computed but not fed to the model. These were tested on 2026-10-05 and lowered
 # walk-forward AUC (see docs/research/reading-crypto-charts-for-day-trading.md, "Results in this repo").
@@ -26,9 +38,6 @@ UNUSED_FEATURES = [
     "taker_ratio", "taker_ratio_6", "taker_ratio_24", "taker_z", "trades_z",
     "funding", "funding_3d", "funding_z", "premium", "premium_7d", "premium_z", "market_funding_3d",
 ]
-
-# How far ahead the model predicts, in candles (4h x 6 = 1 day, 1d x 3 = 3 days).
-HORIZON = {"4h": 6, "1d": 3}
 
 # How much history to download the first time.
 HISTORY_START = "2019-01-01T00:00:00Z"
@@ -55,7 +64,15 @@ def atomic(path):
     """Yield a temporary path, then move it over `path` in one step.
 
     The live service and the dashboard share these files; this stops either from reading a half-written one.
+    On Windows the swap fails while another process has the file open, so it retries for a few seconds.
     """
-    tmp = path.with_name(path.name + ".tmp")
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")  # per process, so two writers never collide
     yield tmp
-    os.replace(tmp, path)
+    for attempt in range(50):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 49:
+                raise
+            time.sleep(0.1)

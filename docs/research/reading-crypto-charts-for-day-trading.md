@@ -193,6 +193,27 @@ Conclusions:
 - Five feature sets were compared, so the best result is optimistic by some amount (see the multiple-testing
   caveat in 3.3).
 
+### Follow-up: patterns from the 15m and 1h charts (2026-10-05)
+
+Twenty inputs computed from the 15m and 1h bars in the hours before each 4h close were tested:
+- momentum over 15 minutes to 2 hours, and 15m/1h RSI
+- realised volatility over 4h and 24h, and the share of it from up-moves
+- trend efficiency (steady trend versus chop) and the share of up-bars
+- distance from the 4h high and low
+- last-hour volume share and taker-buy share
+
+Walk-forward on 4h candles:
+
+| Prediction | AUC without | AUC with | Years better |
+|---|---|---|---|
+| Next 4 hours (new model `4h_next`) | 0.5401 | 0.5468 | 5 of 6 |
+| Next 1 day (`4h`) | 0.5310 | 0.5334 | 6 of 6 (small) |
+
+**Adopted for both 4h models.** Next 4 hours is the most predictable horizon found so far. Its long-or-flat
+backtest is strongly positive before fees (mean Sharpe 1.00, about 1,260 trades per coin), but negative at
+0.1% per side (−0.07). It is therefore shown as a timing signal, not a standalone strategy. The permutation
+test for these models has not been run yet. It needs the 15m bars permuted too.
+
 ## Caveats
 
 - Most peer-reviewed crypto evidence uses data from before 2020, often aggregated from CoinMarketCap or CoinDesk, and covers many small coins. Results for four large Binance pairs in 2021–2026 may be much weaker.

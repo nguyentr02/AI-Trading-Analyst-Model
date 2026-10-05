@@ -3,10 +3,13 @@
 An AI that watches **BTC, ETH, BNB and SOL** on Binance, learns from their price history, and estimates
 the chance each coin goes up:
 
-- **4h model:** chance the price is higher in 1 day (6 four-hour candles from now).
-- **1d model:** chance the price is higher in 3 days.
+| Prediction | Built on | Updates |
+|---|---|---|
+| **Next 4 hours** | 4h candles plus the 15m and 1h charts | every 4 hours |
+| **Next 1 day** | 4h candles plus the 15m and 1h charts | every 4 hours |
+| **Next 3 days** | daily candles | once a day |
 
-It streams live prices, retrains itself within seconds of every candle close, and shows everything in a
+It streams live prices, retrains itself a few minutes after every candle close, and shows everything in a
 dashboard alongside your holdings. It **does not place trades**. You make every decision.
 
 Everything runs on your own computer. It uses Binance's free public data (no account or API key) and does
@@ -99,30 +102,39 @@ Firewall may ask whether to allow Python; allow it on private networks.
 | **Backtest** | How the strategy would have done on data the model had not seen, model accuracy, **Learning history**, and a **Retrain models** button |
 | **Portfolio** | Enter your holdings (symbol like `BTC/USDT`, amount, average cost) to see value, profit/loss and the AI's signal for each |
 
-Use the **Timeframe** switch (4h or 1d) at the top of Signals, Chart and Backtest.
+Use the **Prediction** switch (Next 4 hours, Next 1 day, Next 3 days) at the top of Signals, Chart and Backtest.
 
 ### Reading a signal
 
-- **P(up)** is the model's estimated chance the price is higher at the end of the horizon
-  (1 day for 4h, 3 days for 1d).
+- **P(up)** is the model's estimated chance the price is higher at the end of the prediction window
+  (4 hours, 1 day or 3 days from the last closed candle).
 - **BULLISH** when P(up) is 55% or more, **BEARISH** at 48% or less, **NEUTRAL** in between.
-- A new 4h signal is ready a few seconds after each 4h candle closes:
+- New "next 4 hours" and "next 1 day" signals are ready about 3 minutes after each 4h candle closes:
   00:00, 04:00, 08:00, 12:00, 16:00 and 20:00 UTC (07:00, 11:00, 15:00, 19:00, 23:00, 03:00 in Vietnam, UTC+7).
-  The 1d signal updates once a day at 00:00 UTC.
+  The "next 3 days" signal updates once a day, shortly after 00:00 UTC.
 - The Signals page refreshes itself every minute, so you don't need to reload.
 
-**How much to trust it:** the model is right about 52% of the time. That is a small edge, which is normal
-for honest price prediction. The **4h model** has beaten a coin flip in every year since 2021 and passed a
-permutation test (see `docs/research/neurotrader-methods.md`). The **1d model** has not: it did well in 2022 and
-2025 but was no better than chance in 2023–2024. Trust 4h signals more than 1d ones, treat every signal as
-one input among several, and never risk money you can't afford to lose.
+**How much to trust it:** the models are right 52–53% of the time. That is a small edge, which is normal for
+honest price prediction.
+
+| Prediction | Accuracy (AUC*) | Track record | How to use it |
+|---|---|---|---|
+| **Next 4 hours** | 0.546 | Beat a coin flip in every year since 2021 | Timing only. Its edge is real before fees, but trading every change pays it all out in fees |
+| **Next 1 day** | 0.533 | Beat a coin flip in every year; the version before the 15m/1h patterns passed a permutation test | The main signal |
+| **Next 3 days** | 0.527 | No better than chance in 2023–2024; failed a permutation test | Extra caution |
+
+\*AUC: how well the model ranks up moves above down moves on data it never trained on. 0.5 is a coin flip.
+
+A sensible way to combine them: take the **next 1 day** signal as the direction, and use **next 4 hours** to
+choose a better moment to enter or exit. Treat every signal as one input among several, and never risk money
+you can't afford to lose.
 
 ### How it learns
 
 The live service stays connected to Binance. Each time a candle closes it:
 
 1. downloads the final data,
-2. retrains the model on everything since 2019 up to that candle,
+2. retrains the models for that timeframe on everything since 2019 up to that candle,
 3. tests the new model on months it didn't train on, and keeps it only if it still beats a coin flip
    (otherwise it keeps the previous model),
 4. logs the new signals.

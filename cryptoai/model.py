@@ -1,6 +1,7 @@
-"""Train, evaluate (walk-forward) and run the prediction model.
+"""Train, evaluate (walk-forward) and run the prediction models.
 
-One model per timeframe, trained on all symbols pooled together for more data.
+One model per entry in config.MODELS (e.g. "4h" = 4h candles, next-1-day horizon), each trained on all
+symbols pooled together for more data.
 """
 import json
 from datetime import datetime, timezone
@@ -12,6 +13,10 @@ from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.metrics import accuracy_score, roc_auc_score
 
 from . import config, data, features
+
+
+def spec(name):
+    return config.MODELS[name]
 
 
 def _new_model():
@@ -28,16 +33,25 @@ def _new_model():
     )
 
 
-def dataset(timeframe, refresh=True):
+def build_features(name, raw, refresh=False):
+    """Features for every coin in `raw`, adding 15m/1h patterns if this model uses them."""
+    bars = None
+    if spec(name)["intraday"]:
+        since = min(df.index[0] for df in raw.values()) - pd.Timedelta("2D")  # warm-up for 24h windows
+        bars = data.intraday(refresh, since=since)
+    return features.build_all(raw, bars)
+
+
+def dataset(name, refresh=True):
     """Features + target for every symbol, stacked into one frame."""
-    raw = data.closed(timeframe, refresh)
-    feats = features.build_all(raw)
+    raw = data.closed(spec(name)["timeframe"], refresh)
+    feats = build_features(name, raw, refresh)
     frames = []
     for sym, df in raw.items():
         if len(df) < 300:
             continue
         X = feats[sym]
-        X["y"] = features.target(df, config.HORIZON[timeframe])
+        X["y"] = features.target(df, spec(name)["horizon"])
         X["fwd_ret_1"] = df["close"].pct_change().shift(-1)  # next-candle return, for backtests
         X["symbol"] = sym
         frames.append(X.iloc[200:])  # skip warm-up rows where long indicators are undefined
@@ -48,14 +62,14 @@ def feature_cols(ds):
     return [c for c in ds.columns if c not in ("y", "fwd_ret_1", "symbol", *config.UNUSED_FEATURES)]
 
 
-def walk_forward(ds, timeframe, n_folds=8):
+def walk_forward(ds, name, n_folds=8):
     """Out-of-sample probabilities: each fold is predicted by a model trained only on earlier data."""
     cols = feature_cols(ds)
     labeled = ds.dropna(subset=["y"])
     times = labeled.index.unique().sort_values()
     start = len(times) // 3
     edges = np.linspace(start, len(times), n_folds + 1).astype(int)
-    gap = config.HORIZON[timeframe]  # embargo so training labels never overlap the test period
+    gap = spec(name)["horizon"]  # embargo so training labels never overlap the test period
 
     out = []
     for a, b in zip(edges[:-1], edges[1:]):
@@ -70,16 +84,18 @@ def walk_forward(ds, timeframe, n_folds=8):
     return pd.concat(out)
 
 
-def train(timeframe, refresh=True, min_auc=None):
+def train(name, refresh=True, min_auc=None):
     """Retrain on all data up to the last closed candle and save the model.
 
     With `min_auc`, the new model is saved only if its walk-forward AUC reaches it; otherwise the
     current model is kept. Every run is appended to the training log either way.
     """
-    ds = dataset(timeframe, refresh)
-    oos = walk_forward(ds, timeframe)
+    ds = dataset(name, refresh)
+    oos = walk_forward(ds, name)
     metrics = {
-        "timeframe": timeframe,
+        "model": name,
+        "timeframe": spec(name)["timeframe"],
+        "horizon": spec(name)["horizon"],
         "trained_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "last_candle": ds.index.max().isoformat(),
         "rows": int(ds["y"].notna().sum()),
@@ -97,53 +113,66 @@ def train(timeframe, refresh=True, min_auc=None):
     cols = feature_cols(ds)
     final = _new_model().fit(labeled[cols], labeled["y"])
 
-    with config.atomic(config.MODEL_DIR / f"model_{timeframe}.joblib") as tmp:
+    with config.atomic(config.MODEL_DIR / f"model_{name}.joblib") as tmp:
         joblib.dump({"model": final, "features": cols}, tmp)
-    with config.atomic(config.MODEL_DIR / f"oos_{timeframe}.csv") as tmp:
+    with config.atomic(config.MODEL_DIR / f"oos_{name}.csv") as tmp:
         oos.to_csv(tmp)
-    with config.atomic(config.MODEL_DIR / f"metrics_{timeframe}.json") as tmp:
+    with config.atomic(config.MODEL_DIR / f"metrics_{name}.json") as tmp:
         tmp.write_text(json.dumps(metrics, indent=2))
     return metrics
 
 
 def _log(metrics):
     row = pd.DataFrame([metrics])
+    if config.TRAINING_LOG.exists():
+        old = load_log(parse=False)
+        if list(old.columns) != list(row.columns):  # a newer version added columns: rewrite with all of them
+            with config.atomic(config.TRAINING_LOG) as tmp:
+                pd.concat([old, row], ignore_index=True).to_csv(tmp, index=False)
+            return
     row.to_csv(config.TRAINING_LOG, mode="a", header=not config.TRAINING_LOG.exists(), index=False)
 
 
-def load_log():
+def load_log(parse=True):
     if not config.TRAINING_LOG.exists():
         return pd.DataFrame()
-    return pd.read_csv(config.TRAINING_LOG, parse_dates=["trained_at", "last_candle"])
+    log = pd.read_csv(config.TRAINING_LOG)
+    if "model" not in log:
+        log["model"] = log["timeframe"]  # rows from before there were several models per timeframe
+    log["model"] = log["model"].fillna(log["timeframe"])
+    if parse:
+        for c in ("trained_at", "last_candle"):
+            log[c] = pd.to_datetime(log[c], format="ISO8601", utc=True)
+    return log
 
 
-def load(timeframe):
-    path = config.MODEL_DIR / f"model_{timeframe}.joblib"
+def load(name):
+    path = config.MODEL_DIR / f"model_{name}.joblib"
     return joblib.load(path) if path.exists() else None
 
 
-def load_metrics(timeframe):
-    path = config.MODEL_DIR / f"metrics_{timeframe}.json"
+def load_metrics(name):
+    path = config.MODEL_DIR / f"metrics_{name}.json"
     return json.loads(path.read_text()) if path.exists() else None
 
 
-def load_oos(timeframe):
-    path = config.MODEL_DIR / f"oos_{timeframe}.csv"
+def load_oos(name):
+    path = config.MODEL_DIR / f"oos_{name}.csv"
     if not path.exists():
         return None
     return pd.read_csv(path, parse_dates=["time"], index_col="time")
 
 
-def predict_history(raw, timeframe):
+def predict_history(raw, name, refresh=False):
     """P(up) per closed candle for each coin in `raw` ({symbol: candles}, must include BTC/USDT).
 
     Returns a DataFrame with one column per symbol. Past values are in-sample, so use them only for display.
     """
-    bundle = load(timeframe)
+    bundle = load(name)
     if bundle is None:
         return None
     probs = {}
-    for sym, X in features.build_all(raw).items():
-        X = X[bundle["features"]]
+    for sym, X in build_features(name, raw, refresh).items():
+        X = X.reindex(columns=bundle["features"])
         probs[sym] = pd.Series(bundle["model"].predict_proba(X)[:, 1], index=X.index)
     return pd.DataFrame(probs)

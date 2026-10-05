@@ -154,6 +154,17 @@ def closed(timeframe, refresh=True, symbols=config.SYMBOLS):
     return out
 
 
+def intraday(refresh=True, since=None, symbols=config.SYMBOLS):
+    """15m and 1h candles for every symbol, as {symbol: {timeframe: DataFrame}}, optionally from `since`."""
+    out = {}
+    for s in symbols:
+        out[s] = {}
+        for tf in config.INTRADAY_TIMEFRAMES:
+            df = update(s, tf) if refresh else load_cached(s, tf)
+            out[s][tf] = df[df.index >= since] if since is not None else df
+    return out
+
+
 def prices(symbols):
     """Latest prices for a list of symbols."""
     tickers = exchange().fetch_tickers(symbols)

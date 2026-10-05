@@ -1,4 +1,7 @@
-"""Produce the current signal for each symbol and log changes (these are the "alerts")."""
+"""Produce the current signal for each symbol and log changes (these are the "alerts").
+
+The log's "timeframe" column holds the model name from config.MODELS ("4h_next", "4h" or "1d").
+"""
 import pandas as pd
 
 from . import config, data, model
@@ -12,20 +15,20 @@ def label(prob):
     return "NEUTRAL"
 
 
-def current(timeframe, refresh=True):
-    bundle = model.load(timeframe)
-    if bundle is None:
-        raise RuntimeError(f"No {timeframe} model yet. Run: python -m cryptoai train")
-    raw = {s: df.iloc[-400:] for s, df in data.closed(timeframe, refresh).items()}
-    probs = model.predict_history(raw, timeframe)
+def current(name, refresh=True):
+    if model.load(name) is None:
+        raise RuntimeError(f"No {name} model yet. Run: python -m cryptoai train")
+    tf = config.MODELS[name]["timeframe"]
+    raw = {s: df.iloc[-400:] for s, df in data.closed(tf, refresh).items()}
+    probs = model.predict_history(raw, name, refresh)
     rows = []
     for sym, df in raw.items():
         prob = probs[sym].loc[df.index[-1]]
         rows.append(
             {
                 "symbol": sym,
-                "timeframe": timeframe,
-                "candle_close": df.index[-1] + pd.Timedelta(timeframe),
+                "timeframe": name,
+                "candle_close": df.index[-1] + pd.Timedelta(tf),
                 "price": df["close"].iloc[-1],
                 "prob_up": round(float(prob), 3),
                 "signal": label(prob),
@@ -42,10 +45,10 @@ def _last_logged():
     return {(r.symbol, r.timeframe): r.signal for r in last.itertuples()}
 
 
-def check_and_log(timeframes=config.TIMEFRAMES):
+def check_and_log(names=tuple(config.MODELS)):
     """Compute signals, append them to the log, and return only the ones that changed."""
     prev = _last_logged()
-    now = pd.concat([current(tf) for tf in timeframes], ignore_index=True)
+    now = pd.concat([current(n) for n in names], ignore_index=True)
     now["changed"] = [prev.get((r.symbol, r.timeframe)) != r.signal for r in now.itertuples()]
     now["checked_at"] = pd.Timestamp.now(tz="UTC").floor("s")
     now.to_csv(config.SIGNAL_LOG, mode="a", header=not config.SIGNAL_LOG.exists(), index=False)

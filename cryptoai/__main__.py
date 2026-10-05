@@ -16,9 +16,9 @@ def main():
     args = ap.parse_args()
 
     if args.cmd == "train":
-        for tf in config.TIMEFRAMES:
-            print(f"Training {tf} ...")
-            for k, v in model.train(tf).items():
+        for name, spec in config.MODELS.items():
+            print(f"Training {name} ({spec['label']}) ...")
+            for k, v in model.train(name).items():
                 print(f"  {k}: {v}")
 
     elif args.cmd == "live":
@@ -30,7 +30,7 @@ def main():
         from datetime import datetime, timezone
 
         print(f"=== Daily learning run {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC ===")
-        for tf in config.TIMEFRAMES:
+        for tf in config.MODELS:
             prev = model.load_metrics(tf)
             m = model.train(tf, min_auc=config.MIN_AUC)
             change = f" (was {prev['oos_auc']})" if prev else ""
@@ -53,7 +53,7 @@ def main():
                 print(f"  {r.symbol} {r.timeframe}: {r.signal} (P(up)={r.prob_up})")
 
     elif args.cmd == "backtest":
-        for tf in config.TIMEFRAMES:
+        for tf in config.MODELS:
             oos = model.load_oos(tf)
             if oos is None:
                 print(f"No {tf} results - run train first.")
@@ -61,7 +61,7 @@ def main():
             print(f"\n=== {tf} (out-of-sample, fee {config.FEE:.2%}/side) ===")
             print(f"{'symbol':<10}{'strat':>9}{'b&h':>9}{'strat DD':>10}{'b&h DD':>9}{'sharpe':>8}{'trades':>8}")
             for sym, g in oos.groupby("symbol"):
-                _, s = backtest.run(g, tf)
+                _, s = backtest.run(g, config.MODELS[tf]["timeframe"])
                 st, bh = s["strategy"], s["buy_hold"]
                 print(
                     f"{sym:<10}{st['total_return']:>9.0%}{bh['total_return']:>9.0%}"

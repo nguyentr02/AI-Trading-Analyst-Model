@@ -1,7 +1,8 @@
 """Turn raw candles into model inputs. Every feature only uses data up to that candle.
 
 `build` describes one coin's own chart. `build_all` adds market context: what BTC is doing and how
-each coin is performing against BTC and the other tracked coins.
+each coin is performing against BTC and the other tracked coins, and optionally `intraday` patterns from
+the 15m and 1h charts in the hours before each candle closes.
 """
 import numpy as np
 import pandas as pd
@@ -91,12 +92,69 @@ MARKET = "BTC/USDT"
 MARKET_COLS = ["ret_1", "ret_6", "ret_24", "dist_ema50", "dist_ema200", "vol_50", "rsi_14"]
 
 
-def build_all(raw):
+def intraday(bars):
+    """Patterns from the 15m and 1h charts, indexed by bar CLOSE time (known only once the bar has closed).
+
+    `bars` is {"15m": candles, "1h": candles} for one coin.
+    """
+    m, h = bars["15m"].copy(), bars["1h"].copy()
+    m.index = m.index + pd.Timedelta("15min")
+    h.index = h.index + pd.Timedelta("1h")
+    r = np.log(m["close"]).diff()
+    f = pd.DataFrame(index=m.index)
+
+    # Momentum over the last 15 minutes to 2 hours.
+    for n, name in ((1, "15m"), (2, "30m"), (4, "1h"), (8, "2h")):
+        f[f"m_ret_{name}"] = m["close"].pct_change(n)
+    f["m_rsi_14"] = _rsi(m["close"])
+
+    # Volatility: realised over 4h and 24h, and the share of it that came from up-moves.
+    f["m_rv_4h"] = np.sqrt((r ** 2).rolling(16).sum())
+    f["m_rv_24h"] = np.sqrt((r ** 2).rolling(96).sum())
+    f["m_rv_ratio"] = f["m_rv_4h"] / (f["m_rv_24h"] / np.sqrt(6))
+    up, down = (r.clip(lower=0) ** 2).rolling(96).sum(), (r.clip(upper=0) ** 2).rolling(96).sum()
+    f["m_semivar_ratio"] = up / (up + down)
+    f["m_skew_24h"] = r.rolling(96).skew()
+
+    # Path shape: steady trend (efficiency near 1) or back-and-forth chop (near 0).
+    f["m_efficiency_4h"] = np.log(m["close"]).diff(16).abs() / r.abs().rolling(16).sum()
+    f["m_efficiency_24h"] = np.log(m["close"]).diff(96).abs() / r.abs().rolling(96).sum()
+    f["m_up_share_4h"] = (r > 0).astype(float).rolling(16).mean()
+    f["m_from_high_4h"] = m["close"] / m["high"].rolling(16).max() - 1
+    f["m_from_low_4h"] = m["close"] / m["low"].rolling(16).min() - 1
+
+    # Did activity and aggressive buying pick up in the last hour?
+    f["m_vol_last_hour_share"] = m["volume"].rolling(4).sum() / m["volume"].rolling(16).sum()
+    f["m_taker_last_hour"] = m["taker_buy_base"].rolling(4).sum() / m["volume"].rolling(4).sum()
+
+    g = pd.DataFrame(index=h.index)
+    g["h_rsi_14"] = _rsi(h["close"])
+    g["h_dist_ema20"] = h["close"] / h["close"].ewm(span=20).mean() - 1
+    macd = h["close"].ewm(span=12).mean() - h["close"].ewm(span=26).mean()
+    g["h_macd_hist"] = (macd - macd.ewm(span=9).mean()) / h["close"]
+    return f.replace([np.inf, -np.inf], np.nan), g.replace([np.inf, -np.inf], np.nan)
+
+
+def _as_of(src, times):
+    """Latest row of `src` at or before each time in `times`."""
+    src = src[~src.index.duplicated()].sort_index()
+    return src.reindex(src.index.union(times)).ffill().reindex(times)
+
+
+def build_all(raw, intraday_bars=None):
     """Features for every coin in `raw` ({symbol: candles}), including market context.
 
-    `raw` must contain BTC/USDT, and all coins should cover the same recent period.
+    `raw` must contain BTC/USDT, and all coins should cover the same recent period. With `intraday_bars`
+    ({symbol: {"15m": candles, "1h": candles}}), 15m/1h patterns up to each candle's close are added.
     """
     own = {s: build(df) for s, df in raw.items()}
+    if intraday_bars is not None:
+        for s, f in own.items():
+            close_times = raw[s].index + (raw[s].index[1] - raw[s].index[0])
+            f15, f1h = intraday(intraday_bars[s])
+            extra = pd.concat([_as_of(f15, close_times), _as_of(f1h, close_times)], axis=1)
+            extra.index = raw[s].index
+            own[s] = f.join(extra)
     btc = own[MARKET][MARKET_COLS].add_prefix("btc_")
     rank = pd.DataFrame({s: df["close"].pct_change(24) for s, df in raw.items()}).rank(axis=1, pct=True)
     if all("funding" in f for f in own.values()):
