@@ -6,11 +6,16 @@ from plotly.subplots import make_subplots
 
 from cryptoai import backtest, config, data, market, model, portfolio, signals
 
-st.set_page_config(page_title="Crypto AI", page_icon="📈", layout="wide")
+ASSETS = config.ROOT / "assets"
+st.set_page_config(page_title="Crypto AI", page_icon=str(ASSETS / "icon.svg"), layout="wide")
+st.logo(str(ASSETS / "logo.svg"), icon_image=str(ASSETS / "icon.svg"), size="large")
 
-BLUE, ORANGE = "#2a78d6", "#eb6834"  # categorical slots 1 and 2
-UP, DOWN = "#1baf7a", "#e34948"
-GRID = "rgba(128,128,128,0.15)"
+# Coinbase palette, matching .streamlit/config.toml. Plotly needs explicit colors per theme.
+if st.context.theme.type == "dark":
+    BLUE, GREY, UP, DOWN = "#578BFA", "#8A919E", "#27AD75", "#F0616D"
+else:
+    BLUE, GREY, UP, DOWN = "#0052FF", "#8A919E", "#098551", "#CF202F"
+GRID = "rgba(138,145,158,0.18)"
 SIGNAL_ICON = {"BULLISH": "▲ BULLISH", "BEARISH": "▼ BEARISH", "NEUTRAL": "● NEUTRAL"}
 
 
@@ -73,35 +78,22 @@ def get_candles(sym, tf):
     return data.drop_open_candle(data.update(sym, tf), tf)
 
 
-# ---------------- sidebar ----------------
-st.sidebar.title("📈 Crypto AI")
-tf = st.sidebar.radio("Timeframe", config.TIMEFRAMES, index=1, horizontal=True)
-sym = st.sidebar.selectbox("Symbol", config.SYMBOLS)
+# Keep the timeframe and symbol selection when moving between pages.
+st.session_state.setdefault("tf", "1d")
+st.session_state.setdefault("sym", config.SYMBOLS[0])
+for k in ("tf", "sym"):
+    st.session_state[k] = st.session_state[k]
 
-metrics = model.load_metrics(tf)
-if metrics:
-    st.sidebar.caption(
-        f"Model trained {metrics['trained_at'][:16].replace('T', ' ')} UTC\n\n"
-        f"Out-of-sample accuracy **{metrics['oos_accuracy']:.1%}** "
-        f"(coin-flip baseline {max(metrics['baseline_up_rate'], 1 - metrics['baseline_up_rate']):.1%}), "
-        f"AUC **{metrics['oos_auc']:.3f}**"
-    )
-if st.sidebar.button("🔄 Retrain models", help="Downloads fresh data and retrains (≈1 min)"):
-    with st.spinner("Training…"):
-        for t in config.TIMEFRAMES:
-            model.train(t)
-    st.cache_data.clear()
-    st.rerun()
-st.sidebar.warning(
-    "Signals are statistical estimates with a small edge, not advice. "
-    "Size positions so being wrong is affordable."
-)
 
-if model.load(tf) is None:
-    st.error("No model yet. Run `python -m cryptoai train` or press **Retrain models**.")
-    st.stop()
-
-tab_mkt, tab_sig, tab_chart, tab_bt, tab_pf = st.tabs(["Market", "Signals", "Chart", "Backtest", "Portfolio"])
+def controls(symbol=True):
+    """Timeframe and symbol pickers shown at the top of the model pages."""
+    c1, c2, _ = st.columns([1.2, 1.6, 4])
+    tf = c1.radio("Timeframe", config.TIMEFRAMES, key="tf", horizontal=True)
+    sym = c2.selectbox("Symbol", config.SYMBOLS, key="sym") if symbol else None
+    if model.load(tf) is None:
+        st.error("No model yet. Run `python -m cryptoai train` or press **Retrain models** on the Backtest page.")
+        st.stop()
+    return tf, sym
 
 
 # ---------------- market (live) ----------------
@@ -159,11 +151,15 @@ def live_market():
                f"refreshed every 60s. Last update {tk['updated'].max():%H:%M:%S} UTC.")
 
 
-with tab_mkt:
+def page_market():
+    st.title("Market")
     live_market()
 
+
 # ---------------- signals ----------------
-with tab_sig:
+def page_signals():
+    st.title("Signals")
+    tf, _ = controls(symbol=False)
     sig = get_signals(tf)
     cols = st.columns(len(sig))
     for c, r in zip(cols, sig.itertuples()):
@@ -172,7 +168,8 @@ with tab_sig:
         c.caption(f"P(up in {config.HORIZON[tf]} candles): **{r.prob_up:.0%}**")
     st.caption(
         f"BULLISH when P(up) ≥ {config.ENTER_PROB:.0%}, BEARISH when ≤ {config.EXIT_PROB:.0%}. "
-        f"Based on the last closed {tf} candle."
+        f"Based on the last closed {tf} candle. Signals are statistical estimates with a small edge, not "
+        f"advice. Size positions so being wrong is affordable."
     )
     if config.SIGNAL_LOG.exists():
         st.subheader("Recent signal changes")
@@ -183,8 +180,11 @@ with tab_sig:
     else:
         st.info("Run `python -m cryptoai signals` on a schedule to log signal changes (alerts).")
 
+
 # ---------------- chart ----------------
-with tab_chart:
+def page_chart():
+    st.title("Chart")
+    tf, sym = controls()
     df = get_candles(sym, tf)
     lookback = st.slider("Candles shown", 60, 1000, 240, step=20)
     view = df.iloc[-lookback:]
@@ -198,15 +198,19 @@ with tab_chart:
     fig.add_trace(go.Scatter(x=prob.index, y=prob, line=dict(color=BLUE, width=2), name="P(up)",
                              showlegend=False, hovertemplate="%{y:.0%}"), row=2, col=1)
     for y, lbl in ((config.ENTER_PROB, "enter"), (config.EXIT_PROB, "exit")):
-        fig.add_hline(y=y, line=dict(color="gray", width=1, dash="dot"), row=2, col=1,
+        fig.add_hline(y=y, line=dict(color=GREY, width=1, dash="dot"), row=2, col=1,
                       annotation_text=lbl, annotation_position="right")
     fig.update_yaxes(tickformat=".0%", row=2, col=1)
     st.plotly_chart(style(fig, 650), width="stretch")
     st.caption("Past probabilities here come from the final model, which was trained on this data, so they look "
-               "better than reality. Use the Backtest tab for honest performance.")
+               "better than reality. Use the Backtest page for honest performance.")
+
 
 # ---------------- backtest ----------------
-with tab_bt:
+def page_backtest():
+    st.title("Backtest")
+    tf, sym = controls()
+    model_status(tf)
     oos = model.load_oos(tf)
     g = oos[oos["symbol"] == sym]
     c1, c2 = st.columns(2)
@@ -225,7 +229,7 @@ with tab_bt:
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=eq.index, y=eq.strategy, name="AI strategy", line=dict(color=BLUE, width=2),
                              hovertemplate="%{y:.2f}x"))
-    fig.add_trace(go.Scatter(x=eq.index, y=eq.buy_hold, name="Buy & hold", line=dict(color=ORANGE, width=2),
+    fig.add_trace(go.Scatter(x=eq.index, y=eq.buy_hold, name="Buy & hold", line=dict(color=GREY, width=2),
                              hovertemplate="%{y:.2f}x"))
     fig.update_yaxes(type="log", title="Growth of $1 (log)")
     st.plotly_chart(style(fig, 450), width="stretch")
@@ -244,8 +248,30 @@ with tab_bt:
             {"strategy": "{:.0%}", "buy_hold": "{:.0%}", "strategy_dd": "{:.0%}", "buy_hold_dd": "{:.0%}",
              "sharpe": "{:.2f}"}), hide_index=True, width="stretch")
 
+
+def model_status(tf):
+    info, btn = st.columns([5, 1], vertical_alignment="center")
+    metrics = model.load_metrics(tf)
+    if metrics:
+        info.caption(
+            f"{tf} model trained {metrics['trained_at'][:16].replace('T', ' ')} UTC. "
+            f"Out-of-sample accuracy **{metrics['oos_accuracy']:.1%}** "
+            f"(coin-flip baseline {max(metrics['baseline_up_rate'], 1 - metrics['baseline_up_rate']):.1%}), "
+            f"AUC **{metrics['oos_auc']:.3f}**."
+        )
+    if btn.button("Retrain models", icon=":material/refresh:", help="Downloads fresh data and retrains (≈1 min)",
+                  width="stretch"):
+        with st.spinner("Training…"):
+            for t in config.TIMEFRAMES:
+                model.train(t)
+        st.cache_data.clear()
+        st.rerun()
+
+
 # ---------------- portfolio ----------------
-with tab_pf:
+def page_portfolio():
+    st.title("Portfolio")
+    tf = st.session_state["tf"]
     st.caption("Stored locally in portfolio.json. Symbols must be Binance pairs like BTC/USDT.")
     edited = st.data_editor(
         pd.DataFrame(portfolio.load(), columns=["symbol", "amount", "avg_cost"]),
@@ -253,7 +279,7 @@ with tab_pf:
         column_config={"amount": st.column_config.NumberColumn(format="%.6f"),
                        "avg_cost": st.column_config.NumberColumn("avg cost (USDT)", format="%.4f")},
     )
-    if st.button("💾 Save holdings"):
+    if st.button("Save holdings", icon=":material/save:", type="primary"):
         portfolio.save(edited.dropna().to_dict("records"))
         st.success("Saved.")
         st.rerun()
@@ -275,3 +301,16 @@ with tab_pf:
             st.dataframe(pv.style.format({"price": "{:,.4f}", "value": "${:,.2f}", "pnl": "${:,.2f}",
                                           "pnl_pct": "{:+.1%}", "avg_cost": "{:,.4f}"}),
                          hide_index=True, width="stretch")
+
+
+nav = st.navigation(
+    [
+        st.Page(page_market, title="Market", icon=":material/monitoring:", url_path="market", default=True),
+        st.Page(page_signals, title="Signals", icon=":material/bolt:", url_path="signals"),
+        st.Page(page_chart, title="Chart", icon=":material/candlestick_chart:", url_path="chart"),
+        st.Page(page_backtest, title="Backtest", icon=":material/history:", url_path="backtest"),
+        st.Page(page_portfolio, title="Portfolio", icon=":material/account_balance_wallet:", url_path="portfolio"),
+    ],
+    position="top",
+)
+nav.run()

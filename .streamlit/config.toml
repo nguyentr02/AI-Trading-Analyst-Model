@@ -1,0 +1,43 @@
+# Coinbase-style theme. Light and dark follow the viewer's system setting
+# and can be switched from the app menu (top right, Settings).
+
+[theme]
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFontWeights = [700, 600, 600, 600, 600, 600]
+baseRadius = "0.75rem"
+buttonRadius = "full"
+showWidgetBorder = true
+metricValueFontWeight = 600
+
+[theme.light]
+primaryColor = "#0052FF"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F8FF"
+textColor = "#0A0B0D"
+borderColor = "#DEE1E7"
+dataframeBorderColor = "#EEF0F3"
+dataframeHeaderBackgroundColor = "#F7F8F9"
+linkColor = "#0052FF"
+blueColor = "#0052FF"
+greenColor = "#098551"
+redColor = "#CF202F"
+grayColor = "#5B616E"
+chartCategoricalColors = ["#0052FF", "#8A919E", "#098551", "#CF202F", "#F4B000"]
+
+[theme.dark]
+primaryColor = "#578BFA"
+backgroundColor = "#0A0B0D"
+secondaryBackgroundColor = "#16171A"
+textColor = "#FFFFFF"
+borderColor = "#2A2C31"
+dataframeBorderColor = "#1E2025"
+dataframeHeaderBackgroundColor = "#16171A"
+linkColor = "#578BFA"
+blueColor = "#578BFA"
+greenColor = "#27AD75"
+redColor = "#F0616D"
+grayColor = "#8A919E"
+chartCategoricalColors = ["#578BFA", "#8A919E", "#27AD75", "#F0616D", "#FFD200"]
+
+[server]
+runOnSave = true

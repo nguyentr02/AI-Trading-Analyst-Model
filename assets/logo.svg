@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="148" height="32" viewBox="0 0 148 32">
+  <circle cx="16" cy="16" r="16" fill="#0052FF"/>
+  <polyline points="8,20 13,15 17,18 24,11" fill="none" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="40" y="22" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="700" fill="#0052FF">Crypto AI</text>
+</svg>
