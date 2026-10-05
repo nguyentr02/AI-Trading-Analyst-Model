@@ -2,7 +2,7 @@
 import numpy as np
 import pandas as pd
 
-from . import config
+from . import config, metrics
 
 PERIODS_PER_YEAR = {"4h": 6 * 365, "1d": 365}
 
@@ -17,6 +17,14 @@ def positions(prob, enter=config.ENTER_PROB, exit_=config.EXIT_PROB):
             pos = 0
         out.append(pos)
     return pd.Series(out, index=prob.index)
+
+
+def returns(oos_symbol, timeframe, enter=config.ENTER_PROB, exit_=config.EXIT_PROB, fee=config.FEE):
+    """Per-period strategy and buy & hold returns (DataFrame with columns strategy, buy_hold)."""
+    df = oos_symbol.dropna(subset=["fwd_ret_1"]).sort_index()
+    pos = positions(df["prob"], enter, exit_)
+    trades = pos.diff().abs().fillna(pos.iloc[0])
+    return pd.DataFrame({"strategy": pos * df["fwd_ret_1"] - trades * fee, "buy_hold": df["fwd_ret_1"]})
 
 
 def run(oos_symbol, timeframe, enter=config.ENTER_PROB, exit_=config.EXIT_PROB, fee=config.FEE):
@@ -46,6 +54,8 @@ def _stats(strat, bh, pos, trades, timeframe):
         }
 
     s, b = summary(strat), summary(bh)
+    s.update(metrics.summary(strat, ppy, n_trials=config.TRIALS_TESTED, bench=bh))
+    b.update(metrics.summary(bh, ppy))
     # Per-trade win rate: group consecutive long candles into trades.
     trade_id = (pos.diff() == 1).cumsum()[pos == 1]
     trade_rets = (1 + strat[pos == 1]).groupby(trade_id).prod() - 1

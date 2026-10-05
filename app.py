@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from cryptoai import advisor, backtest, config, data, live, market, model, notify, portfolio, signals
+from cryptoai import advisor, backtest, config, data, live, market, metrics, model, notify, portfolio, signals
 
 ASSETS = config.ROOT / "assets"
 st.set_page_config(page_title="Crypto AI", page_icon=str(ASSETS / "icon.svg"), layout="wide")
@@ -521,8 +521,10 @@ def page_backtest():
     kpis.metric("Worst drop", f"{ai['max_drawdown']:.0%}", f"buy & hold {bh['max_drawdown']:.0%}",
                 delta_color="off", delta_arrow="off", border=True,
                 help="Largest fall from a previous high (max drawdown).")
-    kpis.metric("Sharpe ratio", f"{ai['sharpe']:.2f}", f"buy & hold {bh['sharpe']:.2f}",
-                delta_color="off", delta_arrow="off", border=True, help="Return per unit of risk, per year.")
+    kpis.metric("Sharpe ratio", f"{ai['sharpe']:.2f} ± {ai['sharpe_se']:.2f}", f"buy & hold {bh['sharpe']:.2f}",
+                delta_color="off", delta_arrow="off", border=True,
+                help="Return per unit of risk, per year. The ± is its standard error: the true value is likely "
+                     "within about two of these.")
     kpis.metric("Trades", s["num_trades"], f"{s['win_rate']:.0%} won", delta_color="off", delta_arrow="off",
                 border=True)
     kpis.metric("Time invested", f"{s['time_in_market']:.0%}", f"fees {s['fees_paid_pct']:.0%} in total",
@@ -546,19 +548,60 @@ def page_backtest():
     st.caption(f"Walk-forward test from {eq.index[0]:%b %Y}: every period is predicted by a model trained only on "
                f"earlier data, so this is how the AI would have done without seeing the future.")
 
+    trust_section(ai, bh)
+    q = backtest.PERIODS_PER_YEAR[ctf]
+    rets = backtest.returns(oos[oos["symbol"] == sym], ctf, enter, exit_)
+    left, right = st.columns(2, gap="large")
+    with left:
+        st.markdown("**Year by year**")
+        years = [{"Year": str(y), "AI return": (1 + g.strategy).prod() - 1, "Hold return": (1 + g.buy_hold).prod() - 1,
+                  "AI Sharpe": metrics.sharpe(g.strategy, q), "Hold Sharpe": metrics.sharpe(g.buy_hold, q)}
+                 for y, g in rets.groupby(rets.index.year) if len(g) > q / 12]
+        st.dataframe(
+            pd.DataFrame(years).style.format({"AI return": "{:+.0%}", "Hold return": "{:+.0%}",
+                                              "AI Sharpe": "{:.2f}", "Hold Sharpe": "{:.2f}"})
+            .map(lambda v: f"color: {UP}" if v > 0 else f"color: {DOWN}" if v < 0 else "",
+                 subset=["AI return", "Hold return"]),
+            hide_index=True, width="stretch", alt="AI strategy and buy & hold results for each year")
+    with right:
+        st.markdown("**How fees change the result**")
+        fees = []
+        for f in (0.0, 0.0005, 0.00075, 0.001, 0.002):
+            r = backtest.returns(oos[oos["symbol"] == sym], ctf, enter, exit_, fee=f).strategy
+            fees.append({"Fee per trade": f"{f * 100:g}%" + ("  (Binance standard)" if f == 0.001
+                         else "  (paying fees in BNB)" if f == 0.00075 else ""),
+                         "AI return": (1 + r).prod() - 1, "Sharpe": metrics.sharpe(r, q)})
+        st.dataframe(pd.DataFrame(fees).style.format({"AI return": "{:+.0%}", "Sharpe": "{:.2f}"}),
+                     hide_index=True, width="stretch", alt="AI strategy results at different trading fees")
+
     st.subheader("All coins")
-    rows = []
+    rows, basket = [], []
     for sy, g in oos.groupby("symbol"):
         _, ss = backtest.run(g, ctf, enter, exit_)
+        a = ss["strategy"]
         rows.append({"Coin": coin_label(sy),
-                     "AI strategy": ss["strategy"]["total_return"], "Buy & hold": ss["buy_hold"]["total_return"],
-                     "AI worst drop": ss["strategy"]["max_drawdown"], "Hold worst drop": ss["buy_hold"]["max_drawdown"],
-                     "Sharpe": ss["strategy"]["sharpe"], "Trades": ss["num_trades"]})
+                     "AI strategy": a["total_return"], "Buy & hold": ss["buy_hold"]["total_return"],
+                     "AI worst drop": a["max_drawdown"], "Hold worst drop": ss["buy_hold"]["max_drawdown"],
+                     "Sharpe": f"{a['sharpe']:.2f} ± {a['sharpe_se']:.2f}", "Chance Sharpe > 0": a["psr"],
+                     "Chance beats hold": a["psr_vs_hold"], "Trades": ss["num_trades"]})
+        basket.append(backtest.returns(g, ctf, enter, exit_))
+    # Equal-weight basket: a quarter of the money follows the AI on each coin (or a share of the coins trading).
+    b = pd.concat(basket, keys=range(len(basket))).groupby(level=1).mean()
+    bm = metrics.summary(b.strategy, q, bench=b.buy_hold)
+    rows.append({"Coin": "All four together", "AI strategy": (1 + b.strategy).prod() - 1,
+                 "Buy & hold": (1 + b.buy_hold).prod() - 1,
+                 "AI worst drop": metrics.max_drawdown((1 + b.strategy).cumprod()),
+                 "Hold worst drop": metrics.max_drawdown((1 + b.buy_hold).cumprod()),
+                 "Sharpe": f"{bm['sharpe']:.2f} ± {bm['sharpe_se']:.2f}", "Chance Sharpe > 0": bm["psr"],
+                 "Chance beats hold": bm["psr_vs_hold"], "Trades": sum(r["Trades"] for r in rows)})
     pct = ["AI strategy", "Buy & hold", "AI worst drop", "Hold worst drop"]
     st.dataframe(
-        pd.DataFrame(rows).style.format({**{k: "{:+.0%}" for k in pct}, "Sharpe": "{:.2f}"})
+        pd.DataFrame(rows).style.format({**{k: "{:+.0%}" for k in pct}, "Chance Sharpe > 0": "{:.0%}",
+                                         "Chance beats hold": "{:.0%}"})
         .map(lambda v: f"color: {UP}" if v > 0 else f"color: {DOWN}" if v < 0 else "", subset=["AI strategy", "Buy & hold"]),
-        hide_index=True, width="stretch", alt="Backtest results for every coin")
+        hide_index=True, width="stretch", alt="Backtest results for every coin and for all four together")
+    st.caption(f"Sharpe uses a 0% risk-free rate and {q:,} periods a year (crypto trades every day), with fees "
+               f"of {config.FEE:.1%} per trade and no slippage. Details: docs/research/sharpe-ratio.md.")
 
     st.subheader("Learning history")
     history = model.load_log()
@@ -583,6 +626,24 @@ def page_backtest():
                            "Data up to": st.column_config.DatetimeColumn(format="MMM D, HH:mm")})
     st.caption("The model retrains at every candle close on all data so far. A new model replaces the old one only "
                "if it still beats a coin flip on data it didn't train on.")
+
+
+def trust_section(ai, bh):
+    """How much to trust the backtest: risk-adjusted metrics and the chance the edge is real."""
+    st.markdown("**How much to trust this**")
+    row = st.container(horizontal=True, gap="medium")
+    row.metric("Chance Sharpe is above 0", f"{ai['psr']:.0%}", border=True,
+               help="Probabilistic Sharpe ratio: the chance the strategy's true Sharpe is positive, given how "
+                    "long the test is and how jumpy the returns are.")
+    row.metric("Chance it beats buy & hold", f"{ai['psr_vs_hold']:.0%}", border=True,
+               help="The chance the strategy's true Sharpe is above buy & hold's Sharpe on the same period.")
+    row.metric(f"After {config.TRIALS_TESTED} variants tried", f"{ai['deflated_sharpe']:.0%}", border=True,
+               help="Deflated Sharpe ratio: the chance above 0, corrected for having picked the best of the "
+                    "variants we tested. Below 50% means the result could easily be luck.")
+    row.metric("Sortino ratio", f"{ai['sortino']:.2f}", f"buy & hold {bh['sortino']:.2f}", delta_color="off",
+               delta_arrow="off", border=True, help="Like Sharpe, but only counts falls as risk, not rises.")
+    row.metric("Calmar ratio", f"{ai['calmar']:.2f}", f"buy & hold {bh['calmar']:.2f}", delta_color="off",
+               delta_arrow="off", border=True, help="Yearly growth divided by the worst drop.")
 
 
 def model_status(name):

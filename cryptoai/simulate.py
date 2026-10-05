@@ -15,7 +15,7 @@ signal has switched off and back on, so it doesn't jump straight back into the s
 """
 import pandas as pd
 
-from . import config, data, model
+from . import backtest, config, data, metrics, model
 
 # Each strategy: which models it reads, and its buy and sell rules (fixed before testing).
 STRATEGIES = {
@@ -78,6 +78,7 @@ def simulate(symbol, start, end, cash=1000.0, fee=config.FEE, strategies=STRATEG
         # valued at a close inside the period.
         p = p[p.index <= end - 2 * pd.Timedelta(tf)]
         result = _trade(p, candles, strat, cash, fee, tf, stop)
+        result["summary"].update(_risk(result["equity"], tf))
         summaries.append({"strategy": label, **result["summary"]})
         trade_logs[label] = result["trades"]
         curves[label] = result["equity"]
@@ -92,7 +93,8 @@ def simulate(symbol, start, end, cash=1000.0, fee=config.FEE, strategies=STRATEG
     curves["Buy & hold"] = hold_eq
     fees = cash * fee + coins * held.iloc[-1] * fee
     summaries.append({"strategy": "Buy & hold",
-                      **_summary(hold_eq, cash, 1, float(hold_eq.iloc[-1] > cash), fees, 1.0, 0)})
+                      **_summary(hold_eq, cash, 1, float(hold_eq.iloc[-1] > cash), fees, 1.0, 0),
+                      **_risk(hold_eq, "4h")})
     return pd.DataFrame(summaries).set_index("strategy"), trade_logs, pd.DataFrame(curves).sort_index().ffill()
 
 
@@ -157,6 +159,17 @@ def _trade(p, candles, strat, cash, fee, tf, stop):
     win_rate = float((trades["profit"] > 0).mean()) if len(trades) else float("nan")
     return {"summary": _summary(eq, start_cash, len(trades), win_rate, fees, in_market / len(p), stops),
             "trades": trades, "equity": eq}
+
+
+def _risk(equity, tf):
+    """Sharpe (with its standard error), Sortino and the chance the Sharpe is above 0, from the balance curve.
+
+    Over a few months the standard error is large (about 1.4 for 6 months), so read these with care.
+    """
+    q = backtest.PERIODS_PER_YEAR[tf]
+    r = equity.pct_change().dropna()
+    return {"sharpe": metrics.sharpe(r, q), "sharpe_se": metrics.sharpe_se(r, q),
+            "sortino": metrics.sortino(r, q), "chance sharpe > 0": metrics.psr(r, q)}
 
 
 def _summary(eq, start_cash, n_trades, win_rate, fees, time_in_market, stops):

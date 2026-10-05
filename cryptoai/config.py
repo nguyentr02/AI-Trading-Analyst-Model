@@ -45,6 +45,9 @@ HISTORY_START = "2019-01-01T00:00:00Z"
 # Daily learning: a newly trained model replaces the current one only if its walk-forward AUC
 # is at least this (0.5 = no better than a coin flip). Otherwise the previous model is kept.
 MIN_AUC = 0.505
+# How many feature sets and strategy variants have been compared so far (see docs/research/). The deflated
+# Sharpe ratio corrects for picking the best of these. Raise it whenever another variant is tried.
+TRIALS_TESTED = 8
 TRAINING_LOG = MODEL_DIR / "training_log.csv"
 
 # Trading assumptions used in the backtest.

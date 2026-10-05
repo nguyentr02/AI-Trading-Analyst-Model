@@ -1,6 +1,8 @@
 """Command line: python -m cryptoai --help lists every command (train, signals, advice, live, simulate, ...)."""
 import argparse
 
+import pandas as pd
+
 from . import backtest, config, market, model, signals
 
 
@@ -80,6 +82,12 @@ def main():
             stops = f"   {int(r['stops hit'])} stopped out" if stop and name != "Buy & hold" else ""
             print(f"  {name:<28} ${r['final balance']:>9,.2f}  {r['return']:+7.1%}   worst drop {r['worst drop']:+6.1%}"
                   f"   {int(r['trades']):>3} trades   win rate {r['win rate']:>4.0%}   fees ${r['fees paid']:,.2f}{stops}")
+            print(f"  {'':<28} Sharpe {r['sharpe']:+.2f} +/- {r['sharpe_se']:.2f}   Sortino {r['sortino']:+.2f}"
+                  f"   chance Sharpe > 0: {r['chance sharpe > 0']:.0%}")
+        days = (pd.Timestamp(args.end) - pd.Timestamp(args.start)).days
+        if days < 730:
+            print(f"\n  Note: {days} days is short. The +/- on each Sharpe shows how uncertain it is; a difference "
+                  "smaller than about twice that could be luck.")
         for name, t in trades.items():
             t.to_csv(out / f"{tag}_{name.split(' (')[0].replace(' ', '_').lower()}_trades.csv", index=False)
         equity.to_csv(out / f"{tag}_balance.csv")
