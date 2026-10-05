@@ -22,7 +22,6 @@ TRUST = {
                "entries and exits. ",
     "1d": "Weakest: no better than chance in 2023-2024, so treat it with extra caution. ",
 }
-SIGNAL_ICON = {"BULLISH": "▲ BULLISH", "BEARISH": "▼ BEARISH", "NEUTRAL": "● NEUTRAL"}
 
 
 def style(fig, height):
@@ -38,7 +37,7 @@ def style(fig, height):
     return fig
 
 
-@st.cache_data(ttl=300, max_entries=8, show_spinner="Fetching latest candles…")
+@st.cache_data(ttl=300, max_entries=8, show_spinner="Loading AI signals…")
 def get_signals(tf, model_version=None):
     """`model_version` (the model's training time) makes a retrained model show up immediately.
 
@@ -96,11 +95,6 @@ def amount(v):
     return f"{v:,.2f}"
 
 
-@st.cache_data(ttl=300)
-def get_candles(sym, tf):
-    return data.drop_open_candle(data.update(sym, tf), tf)
-
-
 # Keep the timeframe and symbol selection when moving between pages.
 st.session_state.setdefault("model", "4h")
 st.session_state.setdefault("chart_interval", "4h")
@@ -110,19 +104,30 @@ for k in ("model", "sym", "chart_interval", "chart_ind"):
     st.session_state[k] = st.session_state[k]
 
 
-def controls(symbol=True):
-    """Timeframe and symbol pickers shown at the top of the model pages."""
-    c1, c2, _ = st.columns([2.4, 1.6, 3])
-    tf = c1.segmented_control("Prediction", list(config.MODELS), key="model", required=True,
-                              format_func=lambda n: config.MODELS[n]["label"])
-    sym = c2.selectbox("Symbol", config.SYMBOLS, key="sym") if symbol else None
-    if model.load(tf) is None:
-        st.error("No model yet. Run `python -m cryptoai train` or press **Retrain models** on the Backtest page.")
-        st.stop()
-    return tf, sym
-
-
 # ---------------- market (live) ----------------
+COIN_NAMES = {"BTC/USDT": "Bitcoin", "ETH/USDT": "Ethereum", "BNB/USDT": "BNB", "SOL/USDT": "Solana"}
+def coin_label(sym):
+    """'Bitcoin  BTC', or just 'BNB' when the name and ticker are the same."""
+    name, tick = COIN_NAMES.get(sym, sym), coin(sym)
+    return tick if name == tick else f"{name}  {tick}"
+
+
+COIN_COLORS = {"BTC/USDT": "#F7931A", "ETH/USDT": "#627EEA", "BNB/USDT": "#F3BA2F", "SOL/USDT": "#9945FF"}
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def week_closes(sym):
+    """Hourly closes over the last 7 days, for sparklines."""
+    return recent_candles(sym, "1h", limit=168)["close"].tolist()
+
+
+def page_market():
+    st.title("Market")
+    st.caption("Live prices from Binance, market data from CoinGecko.")
+    live_market()
+    supply_table()
+
+
 @st.fragment(run_every=config.LIVE_REFRESH)
 def live_market():
     feed = live_feed()
@@ -141,67 +146,92 @@ def live_market():
         cg = pd.DataFrame(columns=["symbol"])
         st.warning(f"CoinGecko unavailable, market cap data hidden: {e}")
     df = tk.merge(cg, on="symbol", how="left")
-
-    cols = st.columns(len(df))
-    for c, r in zip(cols, df.itertuples()):
-        c.metric(r.symbol, f"${r.price:,.2f}", f"{r.change_24h:+.2%} 24h")
-        c.caption(f"Market cap **{usd(getattr(r, 'market_cap', None))}**"
-                  + (f" · rank #{int(r.rank)}" if pd.notna(getattr(r, "rank", None)) else ""))
-
     col = lambda name: df.get(name, pd.Series(index=df.index, dtype=float))  # CoinGecko columns may be missing
     dollars = lambda v: "–" if pd.isna(v) else f"${v:,.2f}"
 
-    # Two narrower tables instead of one wide one, so neither needs a horizontal scrollbar.
-    st.subheader("Price action")
-    price = pd.DataFrame({
-        "Coin": df["symbol"],
+    # Coin cards: price, 24h change and a 7-day sparkline, like the top of an exchange's markets page.
+    cards = st.container(horizontal=True, gap="medium")
+    for r in df.itertuples():
+        try:
+            spark = week_closes(r.symbol)
+        except Exception:
+            spark = None
+        cards.metric(coin_label(r.symbol).replace("  ", " · "), f"${r.price:,.2f}", f"{r.change_24h:+.2%}",
+                     border=True, chart_data=spark, chart_type="area",
+                     help="Price now, change over 24 hours, and the last 7 days of hourly prices.")
+
+    st.subheader("Markets")
+    markets = pd.DataFrame({
+        "#": col("rank"),
+        "Coin": [coin_label(s) for s in df["symbol"]],
         "Price": df["price"].map(dollars),
         "1h": col("change_1h"),
         "24h": df["change_24h"],
         "7d": col("change_7d"),
-        "24h high": df["high_24h"].map(dollars),
-        "24h low": df["low_24h"].map(dollars),
-        "Volume 24h (Binance)": df["quote_volume_24h"].map(usd),
-    })
-    colored_table(price, ["1h", "24h", "7d"], "Live price, change and 24h range for each coin")
-
-    st.subheader("Market data")
-    mkt = pd.DataFrame({
-        "Coin": df["symbol"],
+        "Last 7 days": [week_closes(s) for s in df["symbol"]],
+        "Volume 24h": col("total_volume_usd").map(usd),
         "Market cap": col("market_cap").map(usd),
-        "FDV": col("fdv").map(usd),
-        "Volume 24h (all exchanges)": col("total_volume_usd").map(usd),
-        "Circulating supply": col("circulating_supply").map(amount),
-        "Max supply": col("max_supply").map(amount),
-        "All-time high": col("ath").map(dollars),
-        "From ATH": col("from_ath"),
     })
-    colored_table(mkt, ["From ATH"], "Market cap, supply and all-time high for each coin")
-    st.caption(f"Live. Price, 24h change, high/low and Binance volume streamed from Binance and redrawn every "
-               f"{config.LIVE_REFRESH}s. Market cap, supply, 1h/7d change and all-exchange volume from CoinGecko, "
-               f"refreshed every 60s. Last update {tk['updated'].max():%H:%M:%S} UTC.")
+    colored_table(markets, ["1h", "24h", "7d"], "Price, change, 7-day trend, volume and market cap for each coin",
+                  column_config={
+                      "#": st.column_config.NumberColumn(width="small", format="%d"),
+                      "Last 7 days": st.column_config.LineChartColumn(width="medium"),
+                      "Volume 24h": st.column_config.TextColumn(help="All exchanges, from CoinGecko"),
+                  })
+
+    st.caption(f"Prices stream from Binance and redraw every {config.LIVE_REFRESH}s. Market cap, volume and "
+               f"1h/7d change come from CoinGecko every 60s. Last update {tk['updated'].max():%H:%M:%S} UTC.")
 
 
-def colored_table(table, pct, alt):
+@st.fragment(run_every=60)
+def supply_table():
+    """Slow-changing CoinGecko data, redrawn once a minute rather than with every price tick."""
+    try:
+        df = get_tickers().merge(get_coingecko(), on="symbol", how="left")
+    except Exception as e:
+        st.caption(f"Supply data unavailable: {e}")
+        return
+    col = lambda name: df.get(name, pd.Series(index=df.index, dtype=float))
+    dollars = lambda v: "–" if pd.isna(v) else f"${v:,.2f}"
+    st.subheader("Supply and valuation")
+    supply = pd.DataFrame({
+        "Coin": [coin_label(s) for s in df["symbol"]],
+        "24h range": [f"{dollars(lo)} – {dollars(hi)}" for lo, hi in zip(df["low_24h"], df["high_24h"])],
+        "Fully diluted value": col("fdv").map(usd),
+        "Circulating supply": col("circulating_supply").map(amount),
+        "Supply issued": col("circulating_supply") / col("max_supply"),
+        "All-time high": col("ath").map(dollars),
+        "From all-time high": col("from_ath"),
+    })
+    colored_table(supply, ["From all-time high"], "24h range, valuation, supply and all-time high for each coin",
+                  column_config={"Supply issued": st.column_config.ProgressColumn(
+                      format="percent", min_value=0, max_value=1,
+                      help="Circulating supply as a share of the maximum supply. Blank when there is no maximum.")})
+
+
+def colored_table(table, pct, alt, column_config=None):
     """Dataframe with percentage columns formatted and colored green (up) or red (down)."""
     st.dataframe(
         table.style.format({k: "{:+.2%}" for k in pct}, na_rep="–")
         .map(lambda v: f"color: {UP}" if pd.notna(v) and v > 0 else f"color: {DOWN}" if pd.notna(v) and v < 0 else "",
              subset=pct),
-        hide_index=True, width="stretch", alt=alt,
+        hide_index=True, width="stretch", alt=alt, column_config=column_config,
     )
 
 
-def page_market():
-    st.title("Market")
-    live_market()
-
-
 # ---------------- signals ----------------
+SIGNAL_STYLE = {  # badge color and icon for each signal
+    "BULLISH": ("green", ":material/trending_up:"),
+    "BEARISH": ("red", ":material/trending_down:"),
+    "NEUTRAL": ("gray", ":material/trending_flat:"),
+}
+SIGNAL_ARROW = {"BULLISH": "▲ Bullish", "BEARISH": "▼ Bearish", "NEUTRAL": "● Neutral"}
+
+
 def page_signals():
     st.title("Signals")
-    tf, _ = controls(symbol=False)
-    signal_board(tf)
+    service_badge()
+    signal_board()
 
 
 def service_badge():
@@ -219,36 +249,70 @@ def service_badge():
         last = max(s.get(f"last_learn_{n}", "") for n in config.MODELS)
         st.badge(f"Live learning: listening for candle closes · last learned {last[11:16]} UTC",
                  icon=":material/sensors:", color="green",
-                 help="The service retrains and updates signals within seconds of every 4h and 1d candle close.")
+                 help="The service retrains and updates signals a few minutes after every 4h and 1d candle close.")
     else:
         st.badge(f"Live learning: {s['state']}", icon=":material/sync:", color="orange")
 
 
+def signal_row(spec, sig):
+    """One prediction inside a coin card: label and badge on one line, probability bar below."""
+    color, icon = SIGNAL_STYLE[sig.signal]
+    line = st.container(horizontal=True, vertical_alignment="center", gap="small")
+    line.markdown(spec["label"], width="content")
+    line.badge(sig.signal.title(), icon=icon, color=color)
+    st.progress(float(sig.prob_up), text=f"P(up) {sig.prob_up:.0%}")
+
+
 @st.fragment(run_every=60)
-def signal_board(tf):
-    """Re-checks every minute so a signal from a just-closed candle appears without reloading the page."""
-    service_badge()
-    sig = get_signals(tf, model_version(tf))
-    cols = st.columns(len(sig))
-    for c, r in zip(cols, sig.itertuples()):
-        c.metric(r.symbol, f"{r.price:,.2f}" if r.price >= 1 else f"{r.price:.5f}", SIGNAL_ICON[r.signal],
-                 delta_color="normal" if r.signal == "BULLISH" else "inverse" if r.signal == "BEARISH" else "off")
-        c.caption(f"P(up, {config.MODELS[tf]['label'].lower()}): **{r.prob_up:.0%}**")
-    st.caption(
-        f"BULLISH when P(up) ≥ {config.ENTER_PROB:.0%}, BEARISH when ≤ {config.EXIT_PROB:.0%}. "
-        f"Based on the last closed {config.MODELS[tf]['timeframe']} candle. "
-        + TRUST.get(tf, "")
-        + f"Signals are statistical estimates with a small edge, not "
-        f"advice. Size positions so being wrong is affordable."
+def signal_board():
+    """Every coin's three predictions at once. Re-checks every minute so new signals appear by themselves."""
+    names = [n for n in config.MODELS if model.load(n) is not None]
+    if not names:
+        st.error("No model yet. Run `train.bat`, or press **Retrain models** on the Backtest page.")
+        return
+    sigs = {n: get_signals(n, model_version(n)).set_index("symbol") for n in names}
+
+    cards = st.columns(len(config.SYMBOLS), gap="medium")
+    for card, sym in zip(cards, config.SYMBOLS):
+        with card.container(border=True):
+            close = sigs[names[0]].loc[sym, "price"]
+            name, tick = COIN_NAMES[sym], coin(sym)
+            st.markdown(f"#### {name}" + (f" :gray[{tick}]" if name != tick else ""))
+            st.caption(f"Last close ${close:,.2f}")
+            for n in names:
+                signal_row(config.MODELS[n], sigs[n].loc[sym])
+
+    with st.container(border=True):
+        st.markdown("**How to read these**")
+        st.caption(f"P(up) is the chance the price is higher at the end of each window. Bullish at "
+                   f"{config.ENTER_PROB:.0%} or more, bearish at {config.EXIT_PROB:.0%} or less.")
+        for n in names:
+            st.caption(f"**{config.MODELS[n]['label']}:** " + TRUST.get(n, "The main signal for direction.").strip())
+        st.caption("Estimates with a small edge, not advice. Size positions so being wrong is affordable.")
+
+    st.subheader("Recent signal changes")
+    if not config.SIGNAL_LOG.exists():
+        st.caption("No signal changes logged yet. The live learning service logs them at every candle close.")
+        return
+    log = pd.read_csv(config.SIGNAL_LOG)
+    log = log[log["changed"] & log["timeframe"].isin(config.MODELS) & log["symbol"].isin(config.SYMBOLS)]
+    log = log.tail(30).iloc[::-1]
+    st.dataframe(
+        pd.DataFrame({
+            "When (UTC)": pd.to_datetime(log["checked_at"], format="ISO8601").dt.strftime("%b %d, %H:%M"),
+            "Coin": log["symbol"].map(coin_label),
+            "Prediction": log["timeframe"].map(lambda n: config.MODELS[n]["label"]),
+            "New signal": log["signal"].map(SIGNAL_ARROW),
+            "P(up)": log["prob_up"].round(2),
+            "Price": log["price"],
+        }).style.map(lambda v: f"color: {UP}" if v.startswith("▲") else f"color: {DOWN}" if v.startswith("▼") else "",
+                     subset=["New signal"]),
+        hide_index=True, width="stretch", alt="Recent changes in the AI's signals",
+        column_config={
+            "P(up)": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1, width="medium"),
+            "Price": st.column_config.NumberColumn(format="dollar"),
+        },
     )
-    if config.SIGNAL_LOG.exists():
-        st.subheader("Recent signal changes")
-        log = pd.read_csv(config.SIGNAL_LOG)
-        changes = log[log["changed"]].tail(20).iloc[::-1]
-        st.dataframe(changes[["checked_at", "symbol", "timeframe", "price", "prob_up", "signal"]],
-                     hide_index=True, width="stretch")
-    else:
-        st.info("Run `python -m cryptoai signals` on a schedule to log signal changes (alerts).")
 
 
 # ---------------- chart ----------------
@@ -425,77 +489,127 @@ def ai_outlook(sym):
 # ---------------- backtest ----------------
 def page_backtest():
     st.title("Backtest")
-    tf, sym = controls()
-    model_status(tf)
-    oos = model.load_oos(tf)
-    g = oos[oos["symbol"] == sym]
-    c1, c2 = st.columns(2)
-    enter = c1.slider("Enter when P(up) >", 0.50, 0.70, config.ENTER_PROB, 0.01)
-    exit_ = c2.slider("Exit when P(up) <", 0.30, 0.55, config.EXIT_PROB, 0.01)
-    ctf = config.MODELS[tf]["timeframe"]
-    eq, s = backtest.run(g, ctf, enter, min(exit_, enter))
-    st_, bh = s["strategy"], s["buy_hold"]
+    bar = st.container(horizontal=True, vertical_alignment="bottom", gap="medium")
+    name = bar.segmented_control("Prediction", list(config.MODELS), key="model", required=True,
+                                 format_func=lambda n: config.MODELS[n]["label"])
+    sym = bar.segmented_control("Coin", config.SYMBOLS, key="sym", required=True, format_func=coin)
+    if model.load(name) is None:
+        st.error("No model yet. Run `train.bat`, or press **Retrain models** below.")
+        retrain_button()
+        return
+    model_status(name)
 
-    m = st.columns(5)
-    m[0].metric("Strategy return", f"{st_['total_return']:.0%}", f"{st_['total_return'] - bh['total_return']:+.0%} vs hold")
-    m[1].metric("Max drawdown", f"{st_['max_drawdown']:.0%}", f"hold: {bh['max_drawdown']:.0%}", delta_color="off")
-    m[2].metric("Sharpe", f"{st_['sharpe']:.2f}", f"hold: {bh['sharpe']:.2f}", delta_color="off")
-    m[3].metric("Trades", s["num_trades"], f"win rate {s['win_rate']:.0%}", delta_color="off")
-    m[4].metric("Time in market", f"{s['time_in_market']:.0%}", f"fees {s['fees_paid_pct']:.0%}", delta_color="off")
+    st.session_state.setdefault("bt_enter", config.ENTER_PROB)
+    st.session_state.setdefault("bt_exit", config.EXIT_PROB)
+    with st.expander("Strategy settings", icon=":material/tune:"):
+        c1, c2 = st.columns(2)
+        enter = c1.slider("Buy when P(up) is above", 0.50, 0.70, key="bt_enter", step=0.01)
+        exit_ = c2.slider("Sell when P(up) is below", 0.30, 0.55, key="bt_exit", step=0.01)
+        st.caption("The strategy holds the coin or cash, never shorts, and pays a "
+                   f"{config.FEE:.2%} fee each time it buys or sells.")
+    enter, exit_ = st.session_state["bt_enter"], min(st.session_state["bt_exit"], st.session_state["bt_enter"])
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=eq.index, y=eq.strategy, name="AI strategy", line=dict(color=BLUE, width=2),
-                             hovertemplate="%{y:.2f}x"))
-    fig.add_trace(go.Scatter(x=eq.index, y=eq.buy_hold, name="Buy & hold", line=dict(color=GREY, width=2),
-                             hovertemplate="%{y:.2f}x"))
-    fig.update_yaxes(type="log", title="Growth of $1 (log)")
-    st.plotly_chart(style(fig, 450), width="stretch")
-    st.caption(f"Walk-forward out-of-sample from {eq.index[0]:%Y-%m-%d}: each period is predicted by a model "
-               f"trained only on earlier data. Fee {config.FEE:.2%} per trade side. Long or flat only.")
+    oos = model.load_oos(name)
+    ctf = config.MODELS[name]["timeframe"]
+    eq, s = backtest.run(oos[oos["symbol"] == sym], ctf, enter, exit_)
+    ai, bh = s["strategy"], s["buy_hold"]
 
+    kpis = st.container(horizontal=True, gap="medium")
+    kpis.metric("AI strategy return", f"{ai['total_return']:+.0%}",
+                f"{ai['total_return'] - bh['total_return']:+.0%} vs buy & hold", border=True)
+    kpis.metric("Buy & hold return", f"{bh['total_return']:+.0%}", border=True)
+    kpis.metric("Worst drop", f"{ai['max_drawdown']:.0%}", f"buy & hold {bh['max_drawdown']:.0%}",
+                delta_color="off", delta_arrow="off", border=True,
+                help="Largest fall from a previous high (max drawdown).")
+    kpis.metric("Sharpe ratio", f"{ai['sharpe']:.2f}", f"buy & hold {bh['sharpe']:.2f}",
+                delta_color="off", delta_arrow="off", border=True, help="Return per unit of risk, per year.")
+    kpis.metric("Trades", s["num_trades"], f"{s['win_rate']:.0%} won", delta_color="off", delta_arrow="off",
+                border=True)
+    kpis.metric("Time invested", f"{s['time_in_market']:.0%}", f"fees {s['fees_paid_pct']:.0%} in total",
+                delta_color="off", delta_arrow="off", border=True)
+
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28], vertical_spacing=0.05)
+    for col_, label, color, width in (("buy_hold", "Buy & hold", GREY, 1.6), ("strategy", "AI strategy", BLUE, 2.2)):
+        fig.add_trace(go.Scatter(x=eq.index, y=eq[col_], name=label, line=dict(color=color, width=width),
+                                 hovertemplate="%{y:.2f}x"), row=1, col=1)
+        drawdown = eq[col_] / eq[col_].cummax() - 1
+        fig.add_trace(go.Scatter(x=eq.index, y=drawdown, name=f"{label} drop", showlegend=False,
+                                 line=dict(color=color, width=1), fill="tozeroy", fillcolor=_rgba(color, 0.18),
+                                 hovertemplate="%{y:.0%}"), row=2, col=1)
+    ticks = [0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64]
+    fig.update_yaxes(type="log", title_text="Growth of $1", tickvals=ticks,
+                     ticktext=[f"{t:g}×" for t in ticks], row=1, col=1)
+    fig.update_yaxes(tickformat=".0%", title_text="Drop from high", row=2, col=1)
+    fig = style(fig, 520)
+    fig.update_yaxes(side="right")
+    st.plotly_chart(fig, width="stretch", alt=f"Growth of $1 and drawdowns for the AI strategy on {coin(sym)}")
+    st.caption(f"Walk-forward test from {eq.index[0]:%b %Y}: every period is predicted by a model trained only on "
+               f"earlier data, so this is how the AI would have done without seeing the future.")
+
+    st.subheader("All coins")
+    rows = []
+    for sy, g in oos.groupby("symbol"):
+        _, ss = backtest.run(g, ctf, enter, exit_)
+        rows.append({"Coin": coin_label(sy),
+                     "AI strategy": ss["strategy"]["total_return"], "Buy & hold": ss["buy_hold"]["total_return"],
+                     "AI worst drop": ss["strategy"]["max_drawdown"], "Hold worst drop": ss["buy_hold"]["max_drawdown"],
+                     "Sharpe": ss["strategy"]["sharpe"], "Trades": ss["num_trades"]})
+    pct = ["AI strategy", "Buy & hold", "AI worst drop", "Hold worst drop"]
+    st.dataframe(
+        pd.DataFrame(rows).style.format({**{k: "{:+.0%}" for k in pct}, "Sharpe": "{:.2f}"})
+        .map(lambda v: f"color: {UP}" if v > 0 else f"color: {DOWN}" if v < 0 else "", subset=["AI strategy", "Buy & hold"]),
+        hide_index=True, width="stretch", alt="Backtest results for every coin")
+
+    st.subheader("Learning history")
     history = model.load_log()
-    if not history.empty:
-        with st.expander("Learning history"):
-            h = history[history["model"] == tf]
-            fig = go.Figure(go.Scatter(x=h["trained_at"], y=h["oos_auc"], mode="lines+markers",
-                                       line=dict(color=BLUE, width=2), name="Walk-forward AUC",
-                                       hovertemplate="%{y:.4f}"))
-            fig.add_hline(y=config.MIN_AUC, line=dict(color=GREY, width=1, dash="dot"),
-                          annotation_text="minimum to accept", annotation_position="right")
-            st.plotly_chart(style(fig, 260), width="stretch")
-            st.dataframe(h.iloc[::-1][["trained_at", "last_candle", "rows", "oos_auc", "oos_accuracy", "accepted"]],
-                         hide_index=True, width="stretch")
-            st.caption("The model retrains every day on all data up to the last closed candle. "
-                       "A new model replaces the old one only if it still beats a coin flip out of sample.")
-
-    with st.expander("All symbols"):
-        rows = []
-        for sy, gg in oos.groupby("symbol"):
-            _, ss = backtest.run(gg, ctf, enter, min(exit_, enter))
-            rows.append({"symbol": sy, "strategy": ss["strategy"]["total_return"],
-                         "buy_hold": ss["buy_hold"]["total_return"],
-                         "strategy_dd": ss["strategy"]["max_drawdown"], "buy_hold_dd": ss["buy_hold"]["max_drawdown"],
-                         "sharpe": ss["strategy"]["sharpe"], "trades": ss["num_trades"]})
-        st.dataframe(pd.DataFrame(rows).style.format(
-            {"strategy": "{:.0%}", "buy_hold": "{:.0%}", "strategy_dd": "{:.0%}", "buy_hold_dd": "{:.0%}",
-             "sharpe": "{:.2f}"}), hide_index=True, width="stretch")
+    h = history[history["model"] == name] if not history.empty else history
+    if h.empty:
+        st.caption("No retraining recorded yet.")
+        return
+    fig = go.Figure(go.Scatter(x=h["trained_at"], y=h["oos_auc"], mode="lines+markers", name="AUC",
+                               line=dict(color=BLUE, width=2), hovertemplate="%{y:.4f}"))
+    fig.add_hline(y=config.MIN_AUC, line=dict(color=GREY, width=1, dash="dot"),
+                  annotation_text="minimum to accept", annotation_position="bottom right")
+    fig.update_yaxes(title_text="Walk-forward AUC")
+    st.plotly_chart(style(fig, 240), width="stretch", alt="Model accuracy after each retrain")
+    with st.expander("Every retrain", icon=":material/list:"):
+        st.dataframe(
+            h.iloc[::-1][["trained_at", "last_candle", "rows", "oos_auc", "oos_accuracy", "accepted"]].rename(columns={
+                "trained_at": "Trained (UTC)", "last_candle": "Data up to", "rows": "Training rows",
+                "oos_auc": "AUC", "oos_accuracy": "Accuracy", "accepted": "Kept"}),
+            hide_index=True, width="stretch", alt="Every retraining run",
+            column_config={"Accuracy": st.column_config.NumberColumn(format="percent"),
+                           "Trained (UTC)": st.column_config.DatetimeColumn(format="MMM D, HH:mm"),
+                           "Data up to": st.column_config.DatetimeColumn(format="MMM D, HH:mm")})
+    st.caption("The model retrains at every candle close on all data so far. A new model replaces the old one only "
+               "if it still beats a coin flip on data it didn't train on.")
 
 
-def model_status(tf):
-    info, btn = st.columns([5, 1], vertical_alignment="center")
-    metrics = model.load_metrics(tf)
-    if metrics:
-        info.caption(
-            f"{config.MODELS[tf]['label']} model trained {metrics['trained_at'][:16].replace('T', ' ')} UTC. "
-            f"Out-of-sample accuracy **{metrics['oos_accuracy']:.1%}** "
-            f"(coin-flip baseline {max(metrics['baseline_up_rate'], 1 - metrics['baseline_up_rate']):.1%}), "
-            f"AUC **{metrics['oos_auc']:.3f}**."
-        )
-    if btn.button("Retrain models", icon=":material/refresh:", help="Downloads fresh data and retrains (≈1 min)",
-                  width="stretch"):
+def model_status(name):
+    """Card with the model's honest accuracy and a retrain button."""
+    m = model.load_metrics(name)
+    with st.container(border=True, horizontal=True, vertical_alignment="center", gap="large"):
+        if m:
+            base = max(m["baseline_up_rate"], 1 - m["baseline_up_rate"])
+            st.metric("Walk-forward AUC", f"{m['oos_auc']:.3f}", help="0.5 is a coin flip.", width="content")
+            st.metric("Accuracy", f"{m['oos_accuracy']:.1%}", f"{m['oos_accuracy'] - base:+.1%} vs always guessing",
+                      delta_arrow="off", width="content")
+            st.markdown(f":gray[Last trained]  \n**{pd.Timestamp(m['trained_at']):%b %d, %H:%M} UTC**",
+                        width="content")
+            st.markdown(f":gray[Training rows]  \n**{m['rows']:,}**", width="content")
+        retrain_button()
+
+
+def _rgba(hex_color, alpha):
+    h = hex_color.lstrip("#")
+    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"
+
+
+def retrain_button():
+    if st.button("Retrain models", icon=":material/refresh:", help="Downloads fresh data and retrains (a few minutes)"):
         with st.spinner("Training…"):
-            for t in config.MODELS:
-                model.train(t)
+            for n in config.MODELS:
+                model.train(n)
         st.cache_data.clear()
         st.rerun()
 
@@ -503,37 +617,88 @@ def model_status(tf):
 # ---------------- portfolio ----------------
 def page_portfolio():
     st.title("Portfolio")
-    tf = st.session_state["model"]
-    st.caption("Stored locally in portfolio.json. Symbols must be Binance pairs like BTC/USDT.")
-    edited = st.data_editor(
-        pd.DataFrame(portfolio.load(), columns=["symbol", "amount", "avg_cost"]),
-        num_rows="dynamic", width="stretch",
-        column_config={"amount": st.column_config.NumberColumn(format="%.6f"),
-                       "avg_cost": st.column_config.NumberColumn("avg cost (USDT)", format="%.4f")},
-    )
-    if st.button("Save holdings", icon=":material/save:", type="primary"):
-        portfolio.save(edited.dropna().to_dict("records"))
-        st.success("Saved.")
-        st.rerun()
-
     holdings = portfolio.load()
     if holdings:
-        try:
-            pv = portfolio.valued(holdings)
-        except Exception as e:
-            st.error(f"Could not price holdings: {e}")
-        else:
-            a, b, c = st.columns(3)
-            total, cost = pv["value"].sum(), (pv["amount"] * pv["avg_cost"]).sum()
-            a.metric("Total value", f"${total:,.2f}")
-            b.metric("Unrealised P&L", f"${total - cost:,.2f}", f"{(total - cost) / cost:+.1%}" if cost else None)
-            sig = get_signals(tf, model_version(tf))
-            sig_map = dict(zip(sig["symbol"], sig["signal"]))
-            pv["AI signal"] = pv["symbol"].map(sig_map).fillna("not tracked")
-            c.metric("Positions flagged BEARISH", int((pv["AI signal"] == "BEARISH").sum()))
-            st.dataframe(pv.style.format({"price": "{:,.4f}", "value": "${:,.2f}", "pnl": "${:,.2f}",
-                                          "pnl_pct": "{:+.1%}", "avg_cost": "{:,.4f}"}),
-                         hide_index=True, width="stretch")
+        portfolio_overview(holdings)
+    else:
+        with st.container(border=True):
+            st.markdown("**No holdings yet**")
+            st.caption("Add what you own below to see its value, profit or loss, and the AI's signals for it.")
+
+    with st.expander("Edit holdings", icon=":material/edit:", expanded=not holdings):
+        edited = st.data_editor(
+            pd.DataFrame(holdings, columns=["symbol", "amount", "avg_cost"]),
+            num_rows="dynamic", width="stretch", key="holdings_editor",
+            column_config={
+                "symbol": st.column_config.TextColumn("Coin pair", help="A Binance pair, like BTC/USDT",
+                                                      validate=r"^[A-Z0-9]+/[A-Z]+$", required=True),
+                "amount": st.column_config.NumberColumn("Amount", format="%.6f", min_value=0, required=True),
+                "avg_cost": st.column_config.NumberColumn("Average cost (USDT)", format="%.4f", min_value=0,
+                                                          required=True),
+            },
+        )
+        if st.button("Save holdings", icon=":material/save:", type="primary"):
+            portfolio.save(edited.dropna().to_dict("records"))
+            st.toast("Holdings saved", icon=":material/check:")
+            st.rerun()
+        st.caption("Saved only on this computer, in portfolio.json.")
+
+
+def portfolio_overview(holdings):
+    try:
+        pv = portfolio.valued(holdings)
+    except Exception as e:
+        st.error(f"Could not price holdings: {e}")
+        return
+    total, cost = pv["value"].sum(), (pv["amount"] * pv["avg_cost"]).sum()
+    pnl = total - cost
+
+    left, right = st.columns([1.5, 1], gap="large", vertical_alignment="center")
+    with left:
+        st.metric("Total balance", f"${total:,.2f}", f"{pnl:+,.2f} USDT ({pnl / cost:+.1%})" if cost else None)
+        stats = st.container(horizontal=True, gap="large")
+        stats.metric("Invested", f"${cost:,.2f}", width="content")
+        stats.metric("Holdings", len(pv), width="content")
+        names = [n for n in ("4h", "4h_next") if model.load(n) is not None]
+        sigs = {n: get_signals(n, model_version(n)).set_index("symbol")["signal"] for n in names}
+        if "4h" in sigs:
+            bearish = int((pv["symbol"].map(sigs["4h"]) == "BEARISH").sum())
+            stats.metric("Flagged bearish (next 1 day)", bearish, width="content")
+    with right:
+        fig = go.Figure(go.Pie(labels=pv["symbol"].map(coin), values=pv["value"], hole=0.62, sort=False,
+                               marker=dict(colors=[COIN_COLORS.get(s, GREY) for s in pv["symbol"]]),
+                               textinfo="label+percent", hovertemplate="%{label}: $%{value:,.2f}<extra></extra>"))
+        fig.update_layout(height=240, margin=dict(l=0, r=0, t=0, b=0), showlegend=False)
+        st.plotly_chart(fig, width="stretch", alt="Share of the portfolio in each coin")
+
+    st.subheader("Holdings")
+    table = pd.DataFrame({
+        "Coin": pv["symbol"].map(coin_label),
+        "Amount": pv["amount"],
+        "Price": pv["price"],
+        "Value": pv["value"],
+        "Allocation": pv["value"] / total if total else 0,
+        "Average cost": pv["avg_cost"],
+        "P&L": pv["pnl"],
+        "P&L %": pv["pnl_pct"],
+    })
+    for n in names:
+        table[f"AI {config.MODELS[n]['label'].lower()}"] = pv["symbol"].map(sigs[n]).map(SIGNAL_ARROW).fillna("not tracked")
+    signal_cols = [c for c in table if c.startswith("AI ")]
+    st.dataframe(
+        table.style.format({"P&L %": "{:+.1%}", "P&L": "{:+,.2f}"})
+        .map(lambda v: f"color: {UP}" if v > 0 else f"color: {DOWN}" if v < 0 else "", subset=["P&L", "P&L %"])
+        .map(lambda v: f"color: {UP}" if v.startswith("▲") else f"color: {DOWN}" if v.startswith("▼") else "",
+             subset=signal_cols),
+        hide_index=True, width="stretch", alt="Your holdings with value, profit or loss, and AI signals",
+        column_config={
+            "Amount": st.column_config.NumberColumn(format="%.6f"),
+            "Price": st.column_config.NumberColumn(format="dollar"),
+            "Value": st.column_config.NumberColumn(format="dollar"),
+            "Average cost": st.column_config.NumberColumn(format="dollar"),
+            "Allocation": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1),
+        },
+    )
 
 
 nav = st.navigation(

@@ -1,4 +1,4 @@
-"""Command line: python -m cryptoai [train|signals|backtest|market|daily|live]"""
+"""Command line: python -m cryptoai [train|signals|backtest|market|daily|live|simulate]"""
 import argparse
 
 from . import backtest, config, market, model, signals
@@ -13,6 +13,11 @@ def main():
     sub.add_parser("market", help="print live price, volume and market cap")
     sub.add_parser("daily", help="daily learning: fetch new candles, retrain, keep the better model, log signals")
     sub.add_parser("live", help="always-on service: learn and signal at every candle close, catch up after downtime")
+    sim = sub.add_parser("simulate", help="paper-trade a coin over a past period from a starting balance")
+    sim.add_argument("symbol", help="e.g. BNB/USDT")
+    sim.add_argument("start", help="first day, e.g. 2026-01-01")
+    sim.add_argument("end", help="day after the last day, e.g. 2026-06-01")
+    sim.add_argument("--cash", type=float, default=1000.0, help="starting balance in USDT (default 1000)")
     args = ap.parse_args()
 
     if args.cmd == "train":
@@ -20,6 +25,24 @@ def main():
             print(f"Training {name} ({spec['label']}) ...")
             for k, v in model.train(name).items():
                 print(f"  {k}: {v}")
+
+    elif args.cmd == "simulate":
+        from . import simulate
+
+        summary, trades, equity = simulate.simulate(args.symbol, args.start, args.end, cash=args.cash)
+        out = config.ROOT / "reports"
+        out.mkdir(exist_ok=True)
+        tag = f"{args.symbol.replace('/', '_')}_{args.start}_{args.end}"
+        print(f"\n{args.symbol} {args.start} to {args.end}, starting with ${args.cash:,.2f}, "
+              f"fee {config.FEE:.2%} per trade\n")
+        for name, r in summary.iterrows():
+            print(f"  {name:<28} ${r['final balance']:>9,.2f}  {r['return']:+7.1%}   worst drop {r['worst drop']:+6.1%}"
+                  f"   {int(r['trades']):>3} trades   win rate {r['win rate']:>4.0%}   fees ${r['fees paid']:,.2f}")
+        for name, t in trades.items():
+            t.to_csv(out / f"{tag}_{name.split(' (')[0].replace(' ', '_').lower()}_trades.csv", index=False)
+        equity.to_csv(out / f"{tag}_balance.csv")
+        simulate.balance_chart(equity, args.symbol, args.cash).write_html(out / f"{tag}_balance.html")
+        print(f"\nTrade lists, balance history and a balance chart (.html) saved in {out}")
 
     elif args.cmd == "live":
         from .live import LiveService
