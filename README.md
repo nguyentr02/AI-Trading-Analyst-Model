@@ -144,6 +144,9 @@ Use the **Prediction** switch (Next 4 hours, Next 1 day, Next 3 days) at the top
   00:00, 04:00, 08:00, 12:00, 16:00 and 20:00 UTC (07:00, 11:00, 15:00, 19:00, 23:00, 03:00 in Vietnam, UTC+7).
   The "next 3 days" signal updates once a day, shortly after 00:00 UTC.
 - The Signals page refreshes itself every minute, so you don't need to reload.
+- **Live now** (under each signal) is a provisional reading, updated every minute: the models re-run on the
+  live Binance price as if the candle still forming closed now. It shows where the signal is heading before
+  the candle closes. The confirmed signal, the alerts and the portfolio advice still update at candle closes.
 
 **How much to trust it:** the models are right 52–53% of the time. That is a small edge, which is normal for
 honest price prediction.

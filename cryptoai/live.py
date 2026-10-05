@@ -21,7 +21,7 @@ import pandas as pd
 import requests
 from websockets.sync.client import connect
 
-from . import advisor, config, model, signals
+from . import advisor, config, model, preview, signals
 
 STREAM_URL = "wss://stream.binance.com:9443/stream?streams="
 WAIT_FOR_ALL = 20  # seconds to wait for every symbol's close message before processing anyway
@@ -43,6 +43,8 @@ class LiveService:
         self.pending = {}  # (timeframe, open_time_ms) -> (first_seen, set of symbols closed)
         self.status = {"started": _now(), "state": "starting"}
         self._saved_at = 0.0
+        self._next_preview = 0.0  # due immediately
+        self._preview_failing = False
 
     # ---------- learning ----------
     def learn(self, tf, reason):
@@ -86,6 +88,18 @@ class LiveService:
                 log(f"{tf} catch-up failed, no connection to Binance ({type(e).__name__}); will retry")
             except Exception:
                 log(f"{tf} catch-up failed:\n{traceback.format_exc()}")
+
+    def refresh_preview(self):
+        """Re-run the models on the live price (provisional signals, see preview.py). Never stops the service."""
+        self._next_preview = time.time() + config.PREVIEW_EVERY
+        try:
+            preview.compute()
+            self.status["last_preview"] = _now()
+            self._preview_failing = False
+        except Exception as e:
+            if not self._preview_failing:  # log the first failure of a run of them, not one per minute
+                log(f"live preview failed ({type(e).__name__}: {e}); will keep trying every minute")
+            self._preview_failing = True
 
     # ---------- streaming ----------
     def _url(self):
@@ -134,6 +148,8 @@ class LiveService:
                         except TimeoutError:
                             pass
                         self._process_ready()
+                        if time.time() >= self._next_preview:
+                            self.refresh_preview()
                         if time.time() - self._saved_at > HEARTBEAT:
                             self._save_status()
             except KeyboardInterrupt:

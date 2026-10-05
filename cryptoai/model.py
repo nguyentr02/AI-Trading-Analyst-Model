@@ -33,10 +33,15 @@ def _new_model():
     )
 
 
-def build_features(name, raw, refresh=False):
-    """Features for every coin in `raw`, adding 15m/1h patterns if this model uses them."""
-    bars = None
-    if spec(name)["intraday"]:
+def build_features(name, raw, refresh=False, bars=None):
+    """Features for every coin in `raw`, adding 15m/1h patterns if this model uses them.
+
+    `bars` ({symbol: {"15m": candles, "1h": candles}}) can be passed in, e.g. with the latest minutes'
+    bars for a live preview; otherwise they are read from the cache.
+    """
+    if not spec(name)["intraday"]:
+        return features.build_all(raw, None)
+    if bars is None:
         since = min(df.index[0] for df in raw.values()) - pd.Timedelta("2D")  # warm-up for 24h windows
         bars = data.intraday(refresh, since=since)
     return features.build_all(raw, bars)
@@ -163,7 +168,7 @@ def load_oos(name):
     return pd.read_csv(path, parse_dates=["time"], index_col="time")
 
 
-def predict_history(raw, name, refresh=False):
+def predict_history(raw, name, refresh=False, bars=None):
     """P(up) per closed candle for each coin in `raw` ({symbol: candles}, must include BTC/USDT).
 
     Returns a DataFrame with one column per symbol. Past values are in-sample, so use them only for display.
@@ -172,7 +177,7 @@ def predict_history(raw, name, refresh=False):
     if bundle is None:
         return None
     probs = {}
-    for sym, X in build_features(name, raw, refresh).items():
+    for sym, X in build_features(name, raw, refresh, bars).items():
         X = X.reindex(columns=bundle["features"])
         probs[sym] = pd.Series(bundle["model"].predict_proba(X)[:, 1], index=X.index)
     return pd.DataFrame(probs)

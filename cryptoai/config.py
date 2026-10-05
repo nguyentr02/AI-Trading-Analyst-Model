@@ -66,7 +66,10 @@ MIN_TRADE_USDT = 10.0
 # Online access through a Cloudflare tunnel (see cryptoai/tunnel.py and cryptoai/auth.py).
 AUTH_FILE = ROOT / "dashboard_auth.json"  # username, salted password hash, token secret; kept off GitHub
 AUTH_SESSIONS_FILE = ROOT / "auth_tokens.json"  # IDs (hashed) of the refresh tokens still valid; kept off GitHub
-PUBLIC_URL_FILE = LOG_DIR / "public_url.txt"  # the tunnel's current public address  # ignore holdings and buys smaller than this (Binance's minimum order is about $5)
+PUBLIC_URL_FILE = LOG_DIR / "public_url.txt"  # the tunnel's current public address
+# Live preview: the models re-run on the live price between candle closes (see cryptoai/preview.py).
+LIVE_PREVIEW = LOG_DIR / "live_preview.json"
+PREVIEW_EVERY = 60  # seconds  # ignore holdings and buys smaller than this (Binance's minimum order is about $5)
 
 for d in (DATA_DIR, MODEL_DIR, LOG_DIR):
     d.mkdir(exist_ok=True)

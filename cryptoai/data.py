@@ -174,6 +174,17 @@ def intraday(refresh=True, since=None, symbols=config.SYMBOLS):
     return out
 
 
+def latest(symbol, timeframe, limit=50):
+    """The most recent candles straight from Binance, in memory only (nothing is written to the cache).
+
+    The last row is the candle still forming.
+    """
+    rows = exchange().publicGetKlines({"symbol": symbol.replace("/", ""), "interval": timeframe, "limit": limit})
+    df = pd.DataFrame([[r[0], *r[1:6], r[7], r[8], r[9]] for r in rows], columns=["time", *KLINE_COLS])
+    df["time"] = pd.to_datetime(df["time"].astype("int64"), unit="ms", utc=True).dt.as_unit("ms")
+    return df.set_index("time").astype(float)
+
+
 def prices(symbols):
     """Latest prices for a list of symbols."""
     tickers = exchange().fetch_tickers(symbols)

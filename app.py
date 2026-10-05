@@ -4,7 +4,8 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from cryptoai import advisor, auth, backtest, config, data, live, market, metrics, model, notify, portfolio, signals
+from cryptoai import (advisor, auth, backtest, config, data, live, market, metrics, model, notify, portfolio, preview,
+                      signals)
 
 ASSETS = config.ROOT / "assets"
 st.set_page_config(page_title="Crypto AI", page_icon=str(ASSETS / "icon.svg"), layout="wide")
@@ -356,13 +357,19 @@ def service_badge():
         st.badge(f"Live learning: {s['state']}", icon=":material/sync:", color="orange")
 
 
-def signal_row(spec, sig):
-    """One prediction inside a coin card: label and badge on one line, probability bar below."""
+def signal_row(spec, sig, live_now=None):
+    """One prediction inside a coin card: confirmed signal and its bar, plus the live provisional reading."""
     color, icon = SIGNAL_STYLE[sig.signal]
     line = st.container(horizontal=True, vertical_alignment="center", gap="small")
     line.markdown(spec["label"], width="content")
     line.badge(sig.signal.title(), icon=icon, color=color)
     st.progress(float(sig.prob_up), text=f"P(up) {sig.prob_up:.0%}")
+    if live_now:
+        arrow = {"BULLISH": ":green[▲]", "BEARISH": ":red[▼]"}.get(live_now["signal"], ":gray[●]")
+        st.caption(f"Live now {arrow} {live_now['prob_up']:.1%} · {live_now['candle_progress']:.0%} into the "
+                   f"{spec['timeframe']} candle", help="Provisional: the models re-run on the live price every "
+                   "minute, treating the candle still forming as if it closed now. It shows where the signal is "
+                   "heading; the confirmed signal above updates when the candle closes.")
 
 
 @st.fragment(run_every=60)
@@ -373,6 +380,9 @@ def signal_board():
         st.error("No model yet. Run `train.bat`, or press **Retrain models** on the Backtest page.")
         return
     sigs = {n: get_signals(n, model_version(n)).set_index("symbol") for n in names}
+    live_preview = preview.load()
+    if live_preview and preview.age_seconds(live_preview) > 5 * 60:
+        live_preview = None  # the service has stopped updating it; don't show stale "live" numbers
 
     cards = st.columns(len(config.SYMBOLS), gap="medium")
     for card, sym in zip(cards, config.SYMBOLS):
@@ -382,7 +392,8 @@ def signal_board():
             st.markdown(f"#### {name}" + (f" :gray[{tick}]" if name != tick else ""))
             st.caption(f"Last close ${close:,.2f}")
             for n in names:
-                signal_row(config.MODELS[n], sigs[n].loc[sym])
+                now = (live_preview or {}).get("models", {}).get(n, {}).get(sym)
+                signal_row(config.MODELS[n], sigs[n].loc[sym], now)
 
     with st.container(border=True):
         st.markdown("**How to read these**")
@@ -390,6 +401,8 @@ def signal_board():
                    f"{config.ENTER_PROB:.0%} or more, bearish at {config.EXIT_PROB:.0%} or less.")
         for n in names:
             st.caption(f"**{config.MODELS[n]['label']}:** " + TRUST.get(n, "The main signal for direction.").strip())
+        st.caption("**Live now** is provisional: the models re-run on the live price every minute, as if the "
+                   "forming candle closed now. Alerts and advice use the confirmed signals.")
         st.caption("Estimates with a small edge, not advice. Size positions so being wrong is affordable.")
 
     st.subheader("Recent signal changes")
