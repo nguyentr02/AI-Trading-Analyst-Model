@@ -45,7 +45,11 @@ def start_session(pair):
 
 def require_login():
     """Sign-in for online access: username + password, then a 15-minute access token renewed with a 7-day
-    refresh token (see cryptoai/auth.py). Opening the dashboard on this PC or the home network skips it."""
+    refresh token (see cryptoai/auth.py). Opening the dashboard on this PC or the home network skips it.
+
+    The browser-token component is mounted exactly once per run (Streamlit refuses a repeated key), so each
+    branch below makes its one token_store call and then returns or stops.
+    """
     if not online_request():
         return
     if not auth.is_set():
@@ -53,19 +57,28 @@ def require_login():
         st.stop()
     s = st.session_state
 
+    # 0. Sign-out was requested on the Sign out page: revoke, forget, and clear the browser's copy.
+    if s.pop("sign_out", False):
+        auth.revoke(s.pop("refresh_token", None))
+        s.pop("access_token", None)
+        s["token_checked"] = True
+        token_store("clear")
+        st.title("Signed out")
+        st.caption("Reload the page to sign in again.")
+        st.stop()
     # 1. A valid access token in this session.
     if auth.verify_access(s.get("access_token")):
         token_store("set", s["refresh_token"])
         return
     # 2. Access token expired: renew it with the refresh token.
     if s.get("refresh_token"):
-        pair = auth.refresh(s["refresh_token"])
-        s.pop("access_token", None), s.pop("refresh_token", None)
+        pair = auth.refresh(s.pop("refresh_token"))
+        s.pop("access_token", None)
         if pair:
             start_session(pair)
             token_store("set", pair[1])
             return
-    # 3. A new visit: look for a refresh token saved in this browser.
+    # 3. A new visit: look for a refresh token saved in this browser (this run's one mount).
     if not s.get("token_checked"):
         stored = token_store("read").stored
         if stored is None:
@@ -76,8 +89,9 @@ def require_login():
         if pair:
             start_session(pair)
             st.rerun()
+    else:
+        token_store("clear")  # no valid tokens: drop any stale copy kept in the browser
     # 4. Sign in.
-    token_store("clear")
     st.title("Crypto AI")
     with st.form("sign_in", width=420):
         username = st.text_input("Username")
@@ -91,13 +105,9 @@ def require_login():
 
 
 def page_sign_out():
-    auth.revoke(st.session_state.get("refresh_token"))
-    for k in ("access_token", "refresh_token"):
-        st.session_state.pop(k, None)
-    st.session_state["token_checked"] = True
-    token_store("clear")
-    st.title("Signed out")
-    st.caption("Reload the page to sign in again.")
+    # require_login() has already mounted the token component this run; let it do the sign-out on a rerun.
+    st.session_state["sign_out"] = True
+    st.rerun()
 
 
 require_login()
