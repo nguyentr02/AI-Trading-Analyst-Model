@@ -251,6 +251,38 @@ feature produced.
 
 `TRIALS_TESTED` was raised to 25.
 
+## Results in this repo: trend rules, volatility targeting and a learned combiner (2026-10-06)
+
+`experiments/trend_ai_strategies.py` tested section 7's items 1–3, plus a **learned combiner**. The combiner
+is a model retrained each year on all earlier years that learns *when* the trend signals work, from trend
+flags, distances from the averages, volatility, momentum and the AI's own P(up). The test used daily
+decisions, an equal-weight 4-coin basket and 0.1% fee + 0.05% slippage per side. The strategy was chosen
+by Sharpe on 2022–2024 and checked on 2025–2026.
+
+| Strategy | 2022–2024 return / Sharpe / worst drop | 2025–2026 return / Sharpe / worst drop |
+|---|---|---|
+| SMA50 trend rule (benchmark) | +145.8% / 0.98 / −39.5% | **+50.9% / 0.91** / −28.4% |
+| Trend ensemble (20/50/100/200) × AI sizer (chosen) | +81.8% / **1.03** / −20.9% | +25.3% / 0.83 / **−15.1%** |
+| Trend ensemble + 40% volatility target | +80.0% / 0.98 / −22.9% | +26.2% / 0.74 / −21.5% |
+| Trend ensemble + 60% volatility target | +92.2% / 0.89 / −30.5% | +27.2% / 0.66 / −26.9% |
+| Trend ensemble | +100.9% / 0.85 / −34.9% | +25.0% / 0.59 / −29.8% |
+| Learned combiner + 40% volatility target | +29.2% / 0.63 / −20.4% | +14.3% / 0.66 / −14.9% |
+| Learned combiner | +35.5% / 0.55 / −29.7% | +12.3% / 0.49 / −19.1% |
+| Buy & hold | +54.6% / 0.55 / −75.3% | −11.0% / 0.15 / −61.6% |
+
+**Not adopted.**
+
+- **The chosen strategy fell short on the check.** Trend ensemble × AI sizer had the best 2022–2024 Sharpe,
+  but on the check it trailed SMA50 (0.83 vs 0.91, uncertainty ±0.76).
+- **Its reliable effect is risk, not return.** It halves the worst drop, at the cost of about half the
+  return.
+- **The learned combiner was the worst active strategy in both phases.** Teaching a model when to trust the
+  trend signals made it worse than following them, the same pattern as every other attempt here to have ML
+  out-time the market.
+- **Plain SMA50 had the highest return in both phases.**
+
+`TRIALS_TESTED` was raised to 31.
+
 ## Caveats
 
 - **Abstracts and secondary sources.** Several papers were read via arXiv abstract or HTML pages through a summarising tool, not in full: [15][16][18][19][30][31][36][38]. The Jaquart et al. Sharpe of 3.23 [16] comes from a search-result abstract; the publisher page was blocked.
