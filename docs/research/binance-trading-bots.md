@@ -82,6 +82,19 @@ Dip DCA was chosen on 2022-2024 and also beat plain DCA on 2025-2026, so it pass
 in both periods, with the worst fall about the same. Letting the AI size the weekly buys did not help. Plain DCA
 beat a lump sum by a wide margin in both periods because both started near a top.
 
+**Volatility-scaled "auto" parameters, tested 2026-10-06 in `experiments/vol_scaled_shock.py`: not adopted.** Binance
+sizes grids from each coin's own volatility; the same idea applied to our shock dip-buy (trigger at k times the
+coin's normal one-hour move instead of a fixed 10% fall) did much worse on 2025-2026. Across the 4 main coins and
+the 6 altcoins, k = 6 (chosen on 2022-2024) made +0.08% per trade over 218 trades (+17.5% in total), against
++3.20% per trade over 26 trades (+83.1%) for the fixed 10% rule. What rebounds is a real panic, not a dip that
+is merely large for that coin.
+
+**Adopted from Binance's design (no trading features):**
+- running stats on the paper-trading pages: realised vs unrealised P&L, fees paid, trades, and the result vs
+  buy & hold, like Binance's running-bot cards (but always next to a benchmark);
+- a Strategy lab page listing every tested idea with its out-of-sample result and verdict, instead of a
+  marketplace ranked by recent ROI.
+
 Not tested: rebalancing (idea 2), grid while in cash (idea 3), execution (idea 4).
 
 Related: the 50-day rule's trades on 2022-2026 win only 21-26% of the time, but average wins are 5.6-9.7 times average losses (`experiments/top_traders.py` comparison), the opposite profile to a grid (many small wins, rare large losses).

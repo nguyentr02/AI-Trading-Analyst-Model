@@ -7,7 +7,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from cryptoai import (advisor, altcoins, auth, backtest, config, data, droprisk, live, market, metrics, model, notify,
-                      paper, portfolio, preview, signals, whales)
+                      paper, portfolio, preview, research_log, signals, whales)
 
 ASSETS = config.ROOT / "assets"
 st.set_page_config(page_title="Crypto AI", page_icon=str(ASSETS / "icon.svg"), layout="wide")
@@ -1034,6 +1034,35 @@ def page_paper(book=paper.MAIN):
     paper_dashboard(book.key)
 
 
+def paper_stats(acct, prices, v, t, now):
+    """Binance-style running stats per account: P&L split into realised and unrealised, fees, trades, vs buy & hold."""
+    start, names = acct["start_cash"], acct["names"]
+    runtime = now - pd.Timestamp(acct["opened"])
+    rows = []
+    for a, sleeves in acct["accounts"].items():
+        unreal = 0.0
+        for s, sl in sleeves.items():
+            qty, cost = paper.holdings(sl)
+            unreal += qty * prices[s] - cost
+        total = v[a] - start
+        mine = t[t["account"] == a]
+        rows.append({"Account": names[a], "Total P&L": total, "Realised": total - unreal, "Unrealised": unreal,
+                     "Fees paid": float(mine["fee"].sum()), "Trades": len(mine), "vs buy & hold": v[a] - v["hold"],
+                     "Invested now": 1 - sum(sl["cash"] for sl in sleeves.values()) / v[a] if v[a] else 0})
+    df = pd.DataFrame(rows).sort_values("Total P&L", ascending=False)
+    signed = ["Total P&L", "Realised", "Unrealised", "vs buy & hold"]
+    st.dataframe(
+        df.style.format({**{c: "{:+,.2f}" for c in signed}, "Fees paid": "${:,.2f}"})
+        .map(lambda x: f"color: {UP}" if isinstance(x, float) and x > 0.005 else
+             f"color: {DOWN}" if isinstance(x, float) and x < -0.005 else "", subset=signed),
+        hide_index=True, width="stretch", alt="Profit and loss breakdown for every paper account",
+        column_config={"Invested now": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1)})
+    st.caption(f"Running {runtime.days} d {runtime.seconds // 3600} h. Realised: profit or loss locked in by sales "
+               "(after fees). Unrealised: the coins still held, at today's price vs what they cost. Fees are 0.1% "
+               "of every trade; slippage is in the fill prices. vs buy & hold: this account minus the buy & hold "
+               "benchmark.")
+
+
 def page_paper_alts():
     page_paper(paper.ALTS)
 
@@ -1086,6 +1115,7 @@ def paper_dashboard(book_key="main"):
     cards = st.container(horizontal=True, gap="medium")
     for a in sorted(v, key=lambda k: -v[k]):
         cards.metric(names[a], f"${v[a]:,.2f}", f"{v[a] - start:+,.2f} ({v[a] / start - 1:+.2%})", border=True)
+    paper_stats(acct, prices, v, paper.trades(book), now)
 
     hist = paper.balance_history(book)
     if len(hist):
@@ -1283,6 +1313,31 @@ def page_alt_learnt():
                "experiments/altcoins_near_zec.py and experiments/trend_universe.py.")
 
 
+def page_strategy_lab():
+    st.title("Strategy lab")
+    st.caption("Every idea tested so far. Unlike a bot marketplace that ranks by the last few days' ROI, each idea "
+               "here was fixed before its results were seen, chosen on one period and judged on another, after "
+               "fees, against a benchmark (usually buy & hold and the 50-day trend rule).")
+    log = research_log.LOG
+    counts = log["Verdict"].value_counts()
+    cards = st.container(horizontal=True, gap="medium")
+    cards.metric("Strategy variants compared", config.TRIALS_TESTED, border=True,
+                 help="Counted for the deflated Sharpe ratio, which corrects for picking the best of many tries.")
+    cards.metric("Ideas tested", len(log), border=True)
+    cards.metric("Adopted", int(counts.get(research_log.ADOPTED, 0)), border=True)
+    cards.metric("Not adopted", int(counts.get(research_log.NOT_ADOPTED, 0)), border=True)
+    pick = st.segmented_control("Show", ["All", *log["Verdict"].unique()], default="All", key="lab_filter") or "All"
+    shown = log if pick == "All" else log[log["Verdict"] == pick]
+    colors = {research_log.ADOPTED: UP, research_log.NOT_ADOPTED: DOWN, research_log.PARTLY: "#F4B000"}
+    st.dataframe(shown.iloc[::-1].style.map(lambda x: f"color: {colors[x]}; font-weight: 600" if x in colors else "",
+                                            subset=["Verdict"]),
+                 hide_index=True, width="stretch", alt="Every tested idea with its result and verdict",
+                 column_config={"Idea": st.column_config.TextColumn(width="large"),
+                                "Result (data not used for choosing)": st.column_config.TextColumn(width="large")})
+    st.caption("Most ideas fail; that is expected. The plain 50-day trend rule has been the hardest benchmark to "
+               "beat. The AI's value so far is mostly in risk: the drop warning, and holding less when it is unsure.")
+
+
 pages = {
     "Top coins": [
         st.Page(page_market, title="Market", icon=":material/monitoring:", url_path="market", default=True),
@@ -1296,6 +1351,9 @@ pages = {
         st.Page(page_altcoins, title="Altcoin market", icon=":material/rocket_launch:", url_path="altcoins"),
         st.Page(page_paper_alts, title="Altcoin paper trading", icon=":material/science:", url_path="altcoins-paper"),
         st.Page(page_alt_learnt, title="What the AI learnt", icon=":material/school:", url_path="altcoins-learnt"),
+    ],
+    "Research": [
+        st.Page(page_strategy_lab, title="Strategy lab", icon=":material/biotech:", url_path="strategy-lab"),
     ],
 }
 if online_request():

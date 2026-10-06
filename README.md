@@ -132,8 +132,13 @@ offline again, run the setup command from step 2 without `-Online`.
 | **Chart** | Candlestick chart with the model's P(up) underneath |
 | **Backtest** | How the strategy would have done on data the model had not seen, model accuracy, **Learning history**, and a **Retrain models** button |
 | **Portfolio** | AI advice (buy / sell / hold, with amounts) for your holdings and spare cash, plus value, profit/loss and allocation |
-| **Paper trading** | The 4-week trial: five pretend accounts trading live, balances, wallets and trade history |
-| **Altcoins** | Experimental, not traded: trend status, AI P(up) and drop risk for NEAR and ZEC, the most volatile liquid altcoins on Binance, and what testing found about altcoins |
+| **Paper trading** | The 4-week trial: five pretend accounts trading live, balances, profit split into realised and unrealised, fees, result vs buy & hold, wallets and trade history |
+| **Altcoins → Altcoin market** | Experimental: trend status, AI P(up) and drop risk for NEAR, ZEC, XRP, DOGE, AVAX and LINK, and the most volatile liquid altcoins on Binance |
+| **Altcoins → Altcoin paper trading** | A separate 4-week trial of the same five accounts on those six altcoins |
+| **Altcoins → What the AI learnt** | What testing found about altcoins |
+| **Research → Strategy lab** | Every idea tested so far, with its result on data it wasn't chosen on, and whether it was adopted |
+
+The navbar has three menus: **Top coins** (the pages for BTC, ETH, BNB and SOL), **Altcoins** and **Research**.
 
 Use the **Prediction** switch (Next 4 hours, Next 1 day, Next 3 days) at the top of Signals, Chart and Backtest.
 

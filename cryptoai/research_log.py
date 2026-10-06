@@ -1,0 +1,65 @@
+"""Every idea tested so far, with its result and verdict: the record behind the Strategy lab page.
+
+Binance ranks bots by recent ROI. This ranks nothing by its best period: every entry was fixed before results were
+seen, chosen on one period and checked on another (mostly 2022-2024 / 2025-2026), after fees, against a benchmark.
+Details are in the experiment named in each row and in docs/research/. Add a row whenever an experiment finishes.
+"""
+import pandas as pd
+
+ADOPTED, NOT_ADOPTED, PARTLY, FINDING = "Adopted", "Not adopted", "Partly", "Finding"
+
+LOG = pd.DataFrame([
+    # (date, area, idea, result on data it did not choose on, verdict, where)
+    ("2026-10-05", "Model inputs", "15-minute and 1-hour chart patterns for the 4h models",
+     "Higher walk-forward AUC", ADOPTED, "docs/research/reading-crypto-charts-for-day-trading.md"),
+    ("2026-10-05", "Model inputs", "Order flow (taker buy/sell volume)", "Lower AUC", NOT_ADOPTED,
+     "docs/research/reading-crypto-charts-for-day-trading.md"),
+    ("2026-10-05", "Model inputs", "Futures funding rate and premium", "Lower AUC", NOT_ADOPTED,
+     "docs/research/reading-crypto-charts-for-day-trading.md"),
+    ("2026-10-05", "Model inputs", "Chart images (ChartScanAI-style)", "No gain", NOT_ADOPTED,
+     "docs/research/chartscanai.md"),
+    ("2026-10-05", "Model inputs", "Technical analysis bundle (Fibonacci, patterns, S/R, ...)", "No gain",
+     NOT_ADOPTED, "docs/research/technical-analysis-concepts.md"),
+    ("2026-10-05", "Model inputs", "Moon phase (placebo)", "Noise level: about 0.003 AUC", FINDING,
+     "docs/research/technical-analysis-concepts.md"),
+    ("2026-10-05", "Model training", "Sliding windows, recency weights, ensembles", "No gain", NOT_ADOPTED,
+     "experiments/training_practices.py"),
+    ("2026-10-05", "Model training", "LightGBM baseline vs the 50-day rule (one-time holdout)",
+     "-29.3% vs +54.0% for the 50-day rule", NOT_ADOPTED, "experiments/baseline_lightgbm.py"),
+    ("2026-10-05", "Trading rules", "Stop-loss in AI Smart", "Stops sold near short-term bottoms", NOT_ADOPTED,
+     "docs/backTestResult"),
+    ("2026-10-05", "Trading rules", "Meta-label filter on AI Smart buys", "No gain", NOT_ADOPTED,
+     "docs/research/other-ai-trading-models.md"),
+    ("2026-10-05", "Trading rules", "Shock dip-buy: 10% fall in 1 hour, sell 4 hours later",
+     "Beat random entries on both check periods", ADOPTED, "experiments/shock_dip_buy.py"),
+    ("2026-10-05", "Trading rules", "Trend rules x AI, learned combiner", "Lower Sharpe than the 50-day rule "
+     "(trend x AI: about half the drawdown, half the return)", PARTLY, "experiments/trend_ai_strategies.py"),
+    ("2026-10-06", "Altcoins", "AI on NEAR and ZEC (with and without training on them)",
+     "Sharpe 0.75 vs 1.83 for the 50-day rule", NOT_ADOPTED, "experiments/altcoins_near_zec.py"),
+    ("2026-10-06", "Risk", "Drop warning (P of a sharp fall before a rise) as AI Smart's exit",
+     "Sharpe 0.42 vs 0.36; worst fall -31.5% vs -40.1%", ADOPTED, "experiments/exit_timing.py"),
+    ("2026-10-06", "Trend rule", "50-day rule + volatility sizing / drop brake", "Sharpe 0.85 vs 0.92",
+     NOT_ADOPTED, "experiments/trend_core.py"),
+    ("2026-10-06", "Trend rule", "50-day rule on the top 8/12/16 coins by volume", "Sharpe 0.28 vs 0.93",
+     NOT_ADOPTED, "experiments/trend_universe.py"),
+    ("2026-10-06", "Trend rule", "Enter over 3/5/10 days instead of at once", "Sharpe 0.79 vs 0.93", NOT_ADOPTED,
+     "experiments/split_entries.py"),
+    ("2026-10-06", "Diagnostic", "Does the AI know anything the trend doesn't?",
+     "Yes: IC +0.049 after removing trend (t 3.3)", FINDING, "experiments/ai_vs_trend.py"),
+    ("2026-10-06", "Trading rules", "Size by calibrated AI confidence", "Sharpe 1.58 before fees, 0.27 after "
+     "(vs 0.96): 187-340 trades a year", NOT_ADOPTED, "experiments/calibrated_sizing.py"),
+    ("2026-10-06", "Trading rules", "Hold only while the 50-day rule AND the AI agree",
+     "Sharpe 1.24 vs 0.96, worst fall -12.5% vs -28%; but lost on 2022-2024", PARTLY,
+     "experiments/low_turnover_ai.py"),
+    ("2026-10-06", "Risk", "Drop warning + volatility forecast (HAR) / options volatility (DVOL)",
+     "AUC -0.002 / -0.053", NOT_ADOPTED, "experiments/drop_features.py"),
+    ("2026-10-06", "Model inputs", "Whale positioning (open interest, top traders vs crowd, trade size)",
+     "Direction -0.001 AUC; drop warning +0.010 / +0.012, not reliable enough (80%)", NOT_ADOPTED,
+     "experiments/whale_features.py"),
+    ("2026-10-06", "DCA", "Weekly buying: 2x below the 50-day average, 0.5x above", "$1.073 vs $1.066 per $1 "
+     "(plain DCA); also ahead on 2022-2024", ADOPTED, "experiments/dca_ai.py"),
+    ("2026-10-06", "DCA", "Weekly buying sized by the AI", "$1.059 vs $1.066 per $1 (plain DCA)", NOT_ADOPTED,
+     "experiments/dca_ai.py"),
+    ("2026-10-06", "Trading rules", "Shock dip-buy trigger scaled to each coin's volatility",
+     "Total +17.5% vs +83.1% for the fixed 10% rule", NOT_ADOPTED, "experiments/vol_scaled_shock.py"),
+], columns=["Date", "Area", "Idea", "Result (data not used for choosing)", "Verdict", "Details"])
