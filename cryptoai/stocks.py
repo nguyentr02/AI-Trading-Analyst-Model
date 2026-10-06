@@ -237,6 +237,19 @@ def buy_list(analysis, live=None):
     return df.sort_values(["in", "from_200d"], ascending=[False, False])
 
 
+def top_pick(buy):
+    """The single stock to buy if you only buy one: the steadiest (lowest past-year volatility) stock in the buy
+    list. Chosen in experiments/stock_top_pick.py among four one-stock rules (best on 2021-2022: +5% vs -16% for the
+    whole list, worst fall -28%), but it lagged the whole list in 2023-2026 (+172% vs +921%): no one-stock rule beat
+    holding the list."""
+    inside = buy[buy["in"]]
+    return None if inside.empty else inside.sort_values("vol").iloc[0]
+
+
+TOP_PICK_RECORD = {"pick_2122": 0.05, "list_2122": -0.16, "pick_2326": 1.72, "list_2326": 9.21,
+                   "pick_worst": -0.32, "list_worst": -0.44}
+
+
 def next_review():
     """The next monthly review: the last US trading day's close of this month (weekends skipped)."""
     now = pd.Timestamp.now(tz="America/New_York")

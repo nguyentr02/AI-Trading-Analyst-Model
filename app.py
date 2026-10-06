@@ -1818,6 +1818,21 @@ def stock_buy_list(a):
     b = stocks.buy_list(a, live)
     n = int(b["in"].sum())
     review = stocks.next_review().tz_convert("UTC")
+    pick = stocks.top_pick(b)
+    if pick is not None:
+        rec = stocks.TOP_PICK_RECORD
+        with st.container(border=True):
+            line = st.container(horizontal=True, vertical_alignment="center", gap="small")
+            line.markdown(f"**AI's top pick: {pick['ticker']} · {pick['name']}** at ${pick['price']:,.2f}",
+                          width="content")
+            line.badge("If you only buy one", icon=":material/star:", color="blue")
+            st.caption(f"The steadiest stock in the buy list: a typical yearly swing of {pick['vol']:.0%} and a worst "
+                       f"fall of {pick['worst_10y']:.0%} in 10 years; {pick['from_200d']:+.0%} above its sell-if-below "
+                       f"line (${pick['avg200']:,.2f}). Of four ways to pick one stock, this did best when tested on "
+                       f"2021-2022 ({rec['pick_2122']:+.0%} vs {rec['list_2122']:+.0%} for the whole list, a bear "
+                       f"market), but it lagged the whole list in 2023-2026 ({rec['pick_2326']:+.0%} vs "
+                       f"{rec['list_2326']:+.0%}). No one-stock pick beat holding the whole list, so the list below is "
+                       "still the better choice. The pick is reviewed monthly with the list.")
     _, saved_cash = stocks.load_portfolio()
     budget = st.number_input("How much do you want to invest? (USD)", min_value=0.0, step=100.0,
                              value=float(saved_cash) if saved_cash >= 100 else 1000.0, key="buy_budget")

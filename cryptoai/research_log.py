@@ -90,6 +90,10 @@ LOG = pd.DataFrame([
      "or decline)", "Next 1 day: readings of 55%+ were followed by +0.30% / +0.17% on average (2022-2024 / "
      "2025-2026), 48% or less by -0.07% / -0.12%; next 4 hours: about no difference in 2025-2026", FINDING,
      "cryptoai/outlook.py"),
+    ("2026-10-06", "US stocks", "One top pick a month from the buy list (by 5-day AI, 3-month potential, strongest "
+     "trend or steadiest)", "Steadiest chosen (2021-2022: +5% vs -16% for the list) but lagged the list in 2023-2026 "
+     "(+172% vs +921%); no one-stock rule beat the list. Shown as 'if you only buy one'", PARTLY,
+     "experiments/stock_top_pick.py"),
     ("2026-10-06", "Execution", "Buy with a limit order 1-3% below the price (wait 1-7 days, else market) instead "
      "of at market", "Every plan paid more on average: crypto +0.00% to +0.34%, stocks +0.16% to +0.97%", NOT_ADOPTED,
      "experiments/entry_price.py"),
