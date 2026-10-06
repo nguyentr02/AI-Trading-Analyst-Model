@@ -3,7 +3,8 @@
 The rules are the ones tested in the backtest and the simulator, using the "next 1 day" model for
 direction and the "next 4 hours" model only as a timing hint:
 
-- You hold a coin and its next-1-day P(up) is at or below EXIT_PROB (48%)  -> SELL it.
+- You hold a coin and its next-1-day P(up) is at or below EXIT_PROB (48%)  -> SELL it, unless you are up by
+  less than the buy + sell fees (selling would lock in a loss) and the drop warning is not High -> HOLD.
 - You hold a coin otherwise                                                 -> HOLD.
 - You don't hold a coin and its next-1-day P(up) is at or above ENTER_PROB  -> BUY, with a suggested amount.
 - Otherwise                                                                 -> WAIT.
@@ -16,13 +17,17 @@ import json
 
 import pandas as pd
 
-from . import config, data, notify, portfolio, signals
+from . import config, data, droprisk, notify, portfolio, signals
 
 DIRECTION, TIMING = "4h", "4h_next"  # model names: next 1 day, next 4 hours
 
 
-def advise(holdings, cash, sig_direction, sig_timing, prices):
-    """Advice per tracked coin (and for any held coin the AI doesn't track), as a DataFrame."""
+def advise(holdings, cash, sig_direction, sig_timing, prices, drop=None):
+    """Advice per tracked coin (and for any held coin the AI doesn't track), as a DataFrame.
+
+    `drop` ({symbol: P(sharp drop)}) lets a High drop warning override the fee guard below.
+    """
+    drop = drop or {}
     held = {}
     for h in holdings:
         held.setdefault(h["symbol"], {"amount": 0.0, "cost": 0.0})
@@ -40,7 +45,15 @@ def advise(holdings, cash, sig_direction, sig_timing, prices):
         if value.get(sym, 0.0) >= config.MIN_TRADE_USDT:
             avg = held[sym]["cost"] / held[sym]["amount"]
             pnl = price / avg - 1
-            if p1 <= config.EXIT_PROB:
+            # Fee guard (simulate.SMART["fee_guard"]): above the price paid, but selling wouldn't cover the buy +
+            # sell fees -> hold, unless the drop warning is High (a stop is needed).
+            fees = (1 + config.FEE) / (1 - config.FEE) - 1
+            in_fee_zone = 0 <= pnl < fees and drop.get(sym, 0.0) < droprisk.SELL_AT
+            if p1 <= config.EXIT_PROB and in_fee_zone:
+                row.update(action="HOLD", reason=f"The AI expects a fall (P(up) {p1:.1%}), but you are only "
+                                                 f"{pnl:+.2%} on this coin: selling now wouldn't cover the buy and "
+                                                 f"sell fees (~{fees:.1%}). Holding unless the drop risk turns High.")
+            elif p1 <= config.EXIT_PROB:
                 row.update(action="SELL", amount_usdt=value[sym], amount_coin=held[sym]["amount"],
                            reason=f"The AI expects a fall over the next day (P(up) {p1:.1%}). "
                                   f"You are {pnl:+.1%} on this coin.")
@@ -88,7 +101,8 @@ def current(refresh=False):
         prices = data.prices(syms)
     except Exception:  # offline: fall back to the last candle close
         prices = sig1["price"].to_dict()
-    return advise(holdings, cash, sig1, sig4, prices)
+    drop = {s: r["p_drop"] for s, r in (droprisk.load() or {}).get("coins", {}).items()}
+    return advise(holdings, cash, sig1, sig4, prices, drop)
 
 
 def check_and_notify(refresh=False):

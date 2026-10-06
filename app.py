@@ -211,6 +211,31 @@ st.session_state.setdefault("alt_chart_ind", ["MA", "Volume"])
 for k in ("model", "sym", "chart_interval", "chart_ind", "alt_chart_interval", "alt_chart_ind"):
     st.session_state[k] = st.session_state[k]
 
+# Time zone for every time shown (data and logs stay in UTC; only the display changes).
+TIMEZONES = {"UTC": "UTC", "Vietnam": "Asia/Ho_Chi_Minh"}
+TZ_LABELS = {"UTC": "UTC", "Vietnam": "Vietnam time"}
+
+
+def tz_label():
+    return TZ_LABELS[st.session_state.get("tz") or "UTC"]
+
+
+def local(t):
+    """A UTC time (Timestamp, ISO string, Series or DatetimeIndex) in the chosen time zone."""
+    zone = TIMEZONES[st.session_state.get("tz") or "UTC"]
+    if isinstance(t, pd.Series):
+        t = pd.to_datetime(t, utc=True, format="ISO8601") if t.dtype == object else t
+        return (t.dt.tz_localize("UTC") if t.dt.tz is None else t).dt.tz_convert(zone)
+    if isinstance(t, pd.DatetimeIndex):
+        return (t.tz_localize("UTC") if t.tz is None else t).tz_convert(zone)
+    t = pd.Timestamp(t)
+    return (t.tz_localize("UTC") if t.tzinfo is None else t).tz_convert(zone)
+
+
+def when(t, fmt="%b %d, %H:%M"):
+    """A time formatted for display with its zone, e.g. 'Oct 06, 14:00 Vietnam time'."""
+    return f"{local(t):{fmt}} {tz_label()}"
+
 
 # ---------------- market (live) ----------------
 COIN_NAMES = {"BTC/USDT": "Bitcoin", "ETH/USDT": "Ethereum", "BNB/USDT": "BNB", "SOL/USDT": "Solana"}
@@ -268,7 +293,7 @@ def whale_panel():
     if len(ev):
         kinds = {"trade": "Big trade", "liquidation": "Liquidation", "cascade": "Liquidation cascade",
                  "oi": "Open interest jump"}
-        st.dataframe(pd.DataFrame({"Time (UTC)": ev["time"].dt.strftime("%b %d, %H:%M:%S"),
+        st.dataframe(pd.DataFrame({f"Time ({tz_label()})": local(ev["time"]).dt.strftime("%b %d, %H:%M:%S"),
                                    "Event": ev["kind"].map(kinds), "Coin": ev["symbol"].str.replace("/USDT", ""),
                                    "Side": ev["side"], "Size": ev["usd"].map(lambda v: usd(v) if v else ""),
                                    "Detail": ev["note"].fillna("")}),
@@ -327,7 +352,7 @@ def live_market():
                   })
 
     st.caption(f"Prices stream from Binance and redraw every {config.LIVE_REFRESH}s. Market cap, volume and "
-               f"1h/7d change come from CoinGecko every 60s. Last update {tk['updated'].max():%H:%M:%S} UTC.")
+               f"1h/7d change come from CoinGecko every 60s. Last update {when(tk['updated'].max(), '%H:%M:%S')}.")
 
 
 @st.fragment(run_every=60)
@@ -390,11 +415,11 @@ def service_badge():
         return
     age = (pd.Timestamp.now(tz="UTC") - pd.Timestamp(s["updated"])).total_seconds()
     if age > 180:
-        st.badge(f"Live learning service offline since {s['updated'][:16].replace('T', ' ')} UTC",
+        st.badge(f"Live learning service offline since {when(s['updated'])}",
                  icon=":material/cloud_off:", color="red")
     elif s["state"] == "listening":
         last = max(s.get(f"last_learn_{n}", "") for n in config.MODELS)
-        st.badge(f"Live learning: listening for candle closes · last learned {last[11:16]} UTC",
+        st.badge(f"Live learning: listening for candle closes · last learned {when(last, '%H:%M')}",
                  icon=":material/sensors:", color="green",
                  help="The service retrains and updates signals a few minutes after every 4h and 1d candle close.")
     else:
@@ -480,7 +505,8 @@ def signal_board():
     log = log.tail(30).iloc[::-1]
     st.dataframe(
         pd.DataFrame({
-            "When (UTC)": pd.to_datetime(log["checked_at"], format="ISO8601").dt.strftime("%b %d, %H:%M"),
+            f"When ({tz_label()})": local(pd.to_datetime(log["checked_at"], format="ISO8601", utc=True))
+            .dt.strftime("%b %d, %H:%M"),
             "Coin": log["symbol"].map(coin_label),
             "Prediction": log["timeframe"].map(lambda n: config.MODELS[n]["label"]),
             "New signal": log["signal"].map(SIGNAL_ARROW),
@@ -574,6 +600,7 @@ def price_chart(sym, interval, shown):
         st.warning(f"Could not load candles from Binance: {e}")
         return
     step = df.index[1] - df.index[0]
+    x = local(df.index).tz_localize(None)  # shown in the chosen time zone
     ai_models = [n for n, s in config.MODELS.items() if s["timeframe"] == tf] if "AI signal" in shown else []
 
     rows = ["price"] + (["volume"] if "Volume" in shown else []) + (["ai"] if ai_models else [])
@@ -583,19 +610,19 @@ def price_chart(sym, interval, shown):
     row = {r: i + 1 for i, r in enumerate(rows)}
 
     fig.add_trace(go.Candlestick(
-        x=df.index, open=df.open, high=df.high, low=df.low, close=df.close, name=coin(sym),
+        x=x, open=df.open, high=df.high, low=df.low, close=df.close, name=coin(sym),
         increasing=dict(line_color=UP, fillcolor=UP), decreasing=dict(line_color=DOWN, fillcolor=DOWN),
         showlegend=False), row=1, col=1)
 
     if "MA" in shown:
         for n, color in MA_COLORS.items():
-            fig.add_trace(go.Scatter(x=df.index, y=df.close.rolling(n).mean(), name=f"MA({n})",
+            fig.add_trace(go.Scatter(x=x, y=df.close.rolling(n).mean(), name=f"MA({n})",
                                      line=dict(color=color, width=1.2), hovertemplate="%{y:,.2f}"), row=1, col=1)
     if "Bollinger" in shown:
         mid, sd = df.close.rolling(20).mean(), df.close.rolling(20).std()
-        fig.add_trace(go.Scatter(x=df.index, y=mid + 2 * sd, name="BB upper", line=dict(color=BLUE, width=1),
+        fig.add_trace(go.Scatter(x=x, y=mid + 2 * sd, name="BB upper", line=dict(color=BLUE, width=1),
                                  opacity=0.6, hovertemplate="%{y:,.2f}", showlegend=False), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=mid - 2 * sd, name="BOLL(20, 2)", line=dict(color=BLUE, width=1),
+        fig.add_trace(go.Scatter(x=x, y=mid - 2 * sd, name="BOLL(20, 2)", line=dict(color=BLUE, width=1),
                                  opacity=0.6, fill="tonexty", fillcolor="rgba(87,139,250,0.07)",
                                  hovertemplate="%{y:,.2f}"), row=1, col=1)
 
@@ -608,7 +635,7 @@ def price_chart(sym, interval, shown):
 
     if "volume" in row:
         colors = [UP if c >= o else DOWN for o, c in zip(df.open, df.close)]
-        fig.add_trace(go.Bar(x=df.index, y=df.volume, name="Volume", marker_color=colors, opacity=0.55,
+        fig.add_trace(go.Bar(x=x, y=df.volume, name="Volume", marker_color=colors, opacity=0.55,
                              showlegend=False, hovertemplate="%{y:,.0f}"), row=row["volume"], col=1)
 
     if ai_models:
@@ -619,7 +646,7 @@ def price_chart(sym, interval, shown):
             p = hist[sym].reindex(df.index)
             main_model = name == ai_models[-1]
             fig.add_trace(go.Scatter(
-                x=p.index, y=p, name=f"AI P(up) {config.MODELS[name]['label'].lower()}",
+                x=x, y=p, name=f"AI P(up) {config.MODELS[name]['label'].lower()}",
                 line=dict(color=BLUE if main_model else GREY, width=2 if main_model else 1.2),
                 hovertemplate="%{y:.0%}"), row=row["ai"], col=1)
         for y in (config.ENTER_PROB, config.EXIT_PROB):
@@ -630,7 +657,7 @@ def price_chart(sym, interval, shown):
     # zoom across the 10-second refreshes (uirevision) until they switch coin or interval.
     view = df.iloc[-INITIAL_CANDLES:]
     pad = (view.high.max() - view.low.min()) * 0.06
-    fig.update_xaxes(range=[view.index[0], df.index[-1] + 6 * step])
+    fig.update_xaxes(range=[x[-len(view)], x[-1] + 6 * step])
     fig.update_yaxes(range=[view.low.min() - pad, view.high.max() + pad], row=1, col=1)
     fig.update_layout(
         height=620, margin=dict(l=0, r=70, t=10, b=0), uirevision=f"{sym}-{interval}",
@@ -719,10 +746,10 @@ def page_backtest():
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28], vertical_spacing=0.05)
     for col_, label, color, width in (("buy_hold", "Buy & hold", GREY, 1.6), ("strategy", "AI strategy", BLUE, 2.2)):
-        fig.add_trace(go.Scatter(x=eq.index, y=eq[col_], name=label, line=dict(color=color, width=width),
+        fig.add_trace(go.Scatter(x=local(eq.index).tz_localize(None), y=eq[col_], name=label, line=dict(color=color, width=width),
                                  hovertemplate="%{y:.2f}x"), row=1, col=1)
         drawdown = eq[col_] / eq[col_].cummax() - 1
-        fig.add_trace(go.Scatter(x=eq.index, y=drawdown, name=f"{label} drop", showlegend=False,
+        fig.add_trace(go.Scatter(x=local(eq.index).tz_localize(None), y=drawdown, name=f"{label} drop", showlegend=False,
                                  line=dict(color=color, width=1), fill="tozeroy", fillcolor=_rgba(color, 0.18),
                                  hovertemplate="%{y:.0%}"), row=2, col=1)
     ticks = [0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64]
@@ -796,6 +823,7 @@ def page_backtest():
     if h.empty:
         st.caption("No retraining recorded yet.")
         return
+    h = h.assign(trained_at=local(h["trained_at"]).dt.tz_localize(None), last_candle=local(h["last_candle"]).dt.tz_localize(None))
     fig = go.Figure(go.Scatter(x=h["trained_at"], y=h["oos_auc"], mode="lines+markers", name="AUC",
                                line=dict(color=BLUE, width=2), hovertemplate="%{y:.4f}"))
     fig.add_hline(y=config.MIN_AUC, line=dict(color=GREY, width=1, dash="dot"),
@@ -805,11 +833,11 @@ def page_backtest():
     with st.expander("Every retrain", icon=":material/list:"):
         st.dataframe(
             h.iloc[::-1][["trained_at", "last_candle", "rows", "oos_auc", "oos_accuracy", "accepted"]].rename(columns={
-                "trained_at": "Trained (UTC)", "last_candle": "Data up to", "rows": "Training rows",
+                "trained_at": f"Trained ({tz_label()})", "last_candle": "Data up to", "rows": "Training rows",
                 "oos_auc": "AUC", "oos_accuracy": "Accuracy", "accepted": "Kept"}),
             hide_index=True, width="stretch", alt="Every retraining run",
             column_config={"Accuracy": st.column_config.NumberColumn(format="percent"),
-                           "Trained (UTC)": st.column_config.DatetimeColumn(format="MMM D, HH:mm"),
+                           f"Trained ({tz_label()})": st.column_config.DatetimeColumn(format="MMM D, HH:mm"),
                            "Data up to": st.column_config.DatetimeColumn(format="MMM D, HH:mm")})
     st.caption("The model retrains at every candle close on all data so far. A new model replaces the old one only "
                "if it still beats a coin flip on data it didn't train on.")
@@ -842,7 +870,7 @@ def model_status(name):
             st.metric("Walk-forward AUC", f"{m['oos_auc']:.3f}", help="0.5 is a coin flip.", width="content")
             st.metric("Accuracy", f"{m['oos_accuracy']:.1%}", f"{m['oos_accuracy'] - base:+.1%} vs always guessing",
                       delta_arrow="off", width="content")
-            st.markdown(f":gray[Last trained]  \n**{pd.Timestamp(m['trained_at']):%b %d, %H:%M} UTC**",
+            st.markdown(f":gray[Last trained]  \n**{when(m['trained_at'])}**",
                         width="content")
             st.markdown(f":gray[Training rows]  \n**{m['rows']:,}**", width="content")
         retrain_button()
@@ -1112,7 +1140,7 @@ def paper_dashboard(book_key="main"):
     now = pd.Timestamp.now(tz="UTC")
     if paper.active(acct):
         left = ends - now
-        st.caption(f"Trial: {opened:%b %d, %H:%M} → {ends:%b %d, %H:%M} UTC · day {(now - opened).days + 1} of "
+        st.caption(f"Trial: {local(opened):%b %d, %H:%M} → {when(ends)} · day {(now - opened).days + 1} of "
                    f"{(ends - opened).days} · {left.days} days {left.seconds // 3600} h left. Each account started with "
                    f"${start:,.0f} (${start / len(book.symbols):,.0f} per coin). Fills at the live Binance price with "
                    f"{acct['fee']:.1%} fee and {acct['slippage']:.2%} slippage. Nothing real is traded.")
@@ -1121,6 +1149,8 @@ def paper_dashboard(book_key="main"):
         if acct.get("final_report"):
             st.caption(f"Final report: docs/backTestResult/{Path(acct['final_report']).name}")
 
+    for c in acct.get("rule_changes", []):
+        st.caption(f":material/rule: Rule change on {when(c['time'])}: {c['change']}")
     cards = st.container(horizontal=True, gap="medium")
     for a in sorted(v, key=lambda k: -v[k]):
         cards.metric(names[a], f"${v[a]:,.2f}", f"{v[a] - start:+,.2f} ({v[a] / start - 1:+.2%})", border=True)
@@ -1135,7 +1165,8 @@ def paper_dashboard(book_key="main"):
             if a not in h:
                 continue
             bench = a in ("trend", "hold")
-            fig.add_trace(go.Scatter(x=h["time"], y=h[a], name=names[a], mode="lines", hovertemplate="$%{y:,.2f}",
+            fig.add_trace(go.Scatter(x=local(h["time"]).dt.tz_localize(None), y=h[a], name=names[a], mode="lines",
+                                     hovertemplate="$%{y:,.2f}",
                                      line=dict(color=PAPER_COLORS[a], width=1.5 if bench else 2.4,
                                                dash="dot" if bench else None)))
         fig.add_hline(y=start, line=dict(color=GREY, width=1, dash="dash"))
@@ -1206,7 +1237,8 @@ def paper_dashboard(book_key="main"):
         st.caption("No trades yet in this account.")
         return
     st.dataframe(
-        pd.DataFrame({"Time (UTC)": t["time"].dt.strftime("%b %d, %H:%M"), "Pair": t["symbol"], "Side": t["side"],
+        pd.DataFrame({f"Time ({tz_label()})": local(t["time"]).dt.strftime("%b %d, %H:%M"), "Pair": t["symbol"],
+                      "Side": t["side"],
                       "Price": t["price"], "Amount": t["quantity"], "Total (USDT)": t["total"], "Fee": t["fee"],
                       "Reason": t["reason"]})
         .style.map(lambda x: f"color: {UP}; font-weight: 600" if x == "BUY" else f"color: {DOWN}; font-weight: 600"
@@ -1331,7 +1363,7 @@ def alt_price_header(sym):
 def alt_card(row):
     """One altcoin's trend status, AI P(up) and drop risk."""
     st.markdown(f"#### {coin(row.symbol)}")
-    st.caption(f"Last 4h close ${row.price:,.4g} · {row.candle:%b %d, %H:%M} UTC")
+    st.caption(f"Last 4h close ${row.price:,.4g} · candle of {when(row.candle)}")
     line = st.container(horizontal=True, vertical_alignment="center", gap="small")
     line.markdown("Trend rule (50-day)", width="content")
     if row.above_50d:
@@ -1408,7 +1440,7 @@ def page_patterns():
         return
     st.caption(f"For the next-1-day model. A copy was trained only on data before {ex['holdout_from'][:10]} and is "
                f"judged here on the {ex['holdout_rows']:,} candles after it, so every number below comes from data "
-               f"the model never learnt from. Updated {ex['computed'][:16].replace('T', ' ')} UTC.")
+               f"the model never learnt from. Updated {when(ex['computed'])}.")
     cards = st.container(horizontal=True, gap="medium")
     cards.metric("Accuracy on unseen data (AUC)", f"{ex['holdout_auc']:.3f}", border=True,
                  help="0.5 is a coin flip. Small but real: the AI ranks rising candles above falling ones a bit "
@@ -1487,4 +1519,7 @@ pages = {
 if online_request():
     pages["Account"] = [st.Page(page_sign_out, title="Sign out", icon=":material/logout:", url_path="sign-out")]
 nav = st.navigation(pages, position="top")
+st.container(horizontal=True, horizontal_alignment="right").segmented_control(
+    "Time zone", list(TIMEZONES), key="tz", default="UTC", required=True, bind="query-params",
+    format_func=lambda z: "UTC" if z == "UTC" else "Vietnam (UTC+7)", label_visibility="collapsed")
 nav.run()

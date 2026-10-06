@@ -44,6 +44,10 @@ SMART = {
     "protect_after": None,  # e.g. 0.10: once up 10%, the stop moves to break-even (None = never)
     "dip_p4": 0.45, "limit_below": 0.01, "limit_candles": 2,  # dip expected -> limit order 1% lower for 8 hours
     "min_change": 0.10,  # ignore position changes smaller than 10% of the account
+    # Don't act on a sell signal when the price is above what was paid but the sale wouldn't cover the buy + sell
+    # fees (the user's rule, 2026-10-06). About neutral in testing (experiments/fee_guard.py); stops and the drop
+    # warning are never blocked.
+    "fee_guard": {"mode": "tiny_profit"},
 }
 
 

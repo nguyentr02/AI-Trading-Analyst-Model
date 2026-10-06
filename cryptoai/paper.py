@@ -255,6 +255,8 @@ def _decide(sl, p1, p3, px):
         if not sl["tp_done"] and px >= avg * (1 + SMART["take_profit"]) and p1 < SMART["take_profit_below"]:
             intents.append(("take_profit", 0.5, f"take half profit: up {px / avg - 1:+.1%}, confidence {p1:.0%}"))
             qty *= 0.5
+    if qty > 0 and p1 <= SMART["sell_below"] and SMART.get("fee_guard") and _below_fees(sl, px):
+        return intents  # the sale wouldn't cover the buy + sell fees: hold (SMART["fee_guard"])
     if qty > 0 and p1 <= SMART["sell_below"]:
         if p3 >= SMART["keep_half_if_3day"]:
             if not half_sold:
@@ -268,6 +270,22 @@ def _decide(sl, p1, p3, px):
         if gap >= SMART["min_change"] and min(gap * value, sl["cash"]) >= config.MIN_TRADE_USDT:
             intents.append((f"buy_{target:.2f}", gap * value, f"confidence {p1:.0%} -> {target:.0%} of the sleeve"))
     return intents
+
+
+def _below_fees(sl, px):
+    """True when the price is above the price paid but selling now would not cover the buy + sell fees."""
+    avg = sl["cost"] / sl["qty"]  # includes the buy fee and slippage
+    paid = avg * (1 - FEE) / (1 + SLIPPAGE)  # the market price at the time of buying
+    return px >= paid and px * (1 - SLIPPAGE) * (1 - FEE) < avg
+
+
+def note_rule_change(text, book=MAIN):
+    """Record a rule change in a running trial, so its reports can say when the rules changed."""
+    acct = load(book)
+    if acct is None:
+        return
+    acct.setdefault("rule_changes", []).append({"time": _now(), "change": text})
+    _save(acct, book)
 
 
 def _execute(book, sym, sl, intents, px, when):
@@ -450,6 +468,7 @@ th {{ background:var(--surface); color:var(--muted); font-weight:500; }} th:firs
 {opened:%Y-%m-%d %H:%M} UTC and traded live until {ends:%Y-%m-%d %H:%M} UTC, with {acct['fee']:.1%} fee and
 {acct['slippage']:.2%} slippage per trade. <b>{acct['names'][best]}</b> finished first with ${v[best]:,.2f}.</p>
 <table><tr><th>Account</th><th>Final balance</th><th>Return</th><th>Worst drop</th><th>Trades</th></tr>{''.join(rows)}</table>
+{''.join(f'<p class="note">Rule change on {c["time"][:16].replace("T", " ")} UTC: {c["change"]}</p>' for c in acct.get("rule_changes", []))}
 <p class="note">Four weeks is far too short to judge a strategy: a single month's Sharpe ratio is uncertain by about ±3.5.
 Read this as a live sanity check of the backtests, not as proof. Trades and hourly balances are in the {book.dir.name}/ folder.</p>
 </main></body></html>"""
