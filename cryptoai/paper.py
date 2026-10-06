@@ -121,8 +121,8 @@ def _sell(account, symbol, sl, share, price, reason):
     qty = sl["qty"] * share
     if qty <= 0:
         return False
-    if qty * price < config.MIN_TRADE_USDT:
-        share, qty = 1.0, sl["qty"]  # don't leave dust behind
+    if (sl["qty"] - qty) * price < config.MIN_TRADE_USDT:
+        share, qty = 1.0, sl["qty"]  # what would be LEFT is dust: sell it all rather than leave a scrap
     fill = price * (1 - SLIPPAGE)
     proceeds = qty * fill * (1 - FEE)
     sl["cash"] += proceeds
@@ -138,6 +138,8 @@ def _rebalance(account, symbol, sl, target, price, reason):
     """Move the sleeve's coin share to `target` (0-1); trades smaller than MIN_TRADE_USDT are skipped."""
     value = sl["cash"] + sl["qty"] * price
     gap = target * value - sl["qty"] * price
+    if abs(gap) < config.MIN_TRADE_USDT:
+        return False  # too small to be worth a trade (and its fee)
     if gap > 0:
         return _buy(account, symbol, sl, gap, price, reason)
     if gap < 0 and sl["qty"] > 0:
