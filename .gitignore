@@ -16,3 +16,6 @@ paper/
 paper_archive_*/
 paper_alts/
 paper_alts_archive_*/
+stock_portfolio.json
+paper_stocks/
+paper_stocks_archive_*/

@@ -21,11 +21,13 @@ import pandas as pd
 import requests
 from websockets.sync.client import connect
 
-from . import advisor, altcoins, config, droprisk, explain, model, notify, paper, preview, signals, whales
+from . import (advisor, altcoins, config, droprisk, explain, model, notify, paper, preview, signals, stockai,
+               stockpaper, stocks, whales)
 
 STREAM_URL = "wss://stream.binance.com:9443/stream?streams="
 WAIT_FOR_ALL = 20  # seconds to wait for every symbol's close message before processing anyway
 HEARTBEAT = 60  # seconds between status file updates, so the dashboard can tell the service is alive
+STOCK_HOUR = 22  # UTC hour, safely after the US close (20:00 UTC in summer, 21:00 in winter), for the stock jobs
 
 
 # Problems reaching Binance. (Not all OSErrors: a PermissionError on a locked file is a different problem.)
@@ -156,6 +158,7 @@ class LiveService:
             hour = time.strftime("%Y%m%d%H", time.gmtime())
             if hour != self._paper_hour:  # balance history: one point an hour
                 self._paper_hour = hour
+                self.stock_jobs()
                 for book in paper.BOOKS:
                     if not paper.is_open(book):
                         continue
@@ -168,6 +171,33 @@ class LiveService:
             if not self._preview_failing:  # log the first failure of a run of them, not one per minute
                 log(f"live preview failed ({type(e).__name__}: {e}); will keep trying every minute")
             self._preview_failing = True
+
+    def stock_jobs(self):
+        """Hourly: the stock paper trial's balance point. Once a day after the US close (from STOCK_HOUR UTC):
+        retrain the stock AI, run the stock paper trial's daily step, and send stock alerts."""
+        try:
+            if stockpaper.is_open():
+                stockpaper.snapshot()
+                news = stockpaper.milestones(lambda title, body: notify.send(title, body))
+                if news:
+                    log(f"    STOCKS: {news}")
+            today = time.strftime("%Y-%m-%d", time.gmtime())
+            if time.gmtime().tm_hour < STOCK_HOUR or self.status.get("stocks_day") == today:
+                return
+            t0 = time.time()
+            r = stockai.train_and_test()
+            log(f"stock AI retrained: AUC {r['auc']['2023-now']:.3f} (2023-now); trading on it "
+                f"{'beats' if r['trade_on_ai'] else 'does not beat'} holding [{time.time() - t0:.0f}s]")
+            if stockpaper.is_open():
+                n = stockpaper.step()
+                log(f"    STOCKS paper: {n} trades")
+            sent = stocks.alerts(lambda title, body: notify.send(title, body))
+            for s in sent:
+                log(f"    STOCK ALERT: {s}")
+            self.status["stocks_day"] = today
+            self._save_status()
+        except Exception:
+            log(f"stock jobs failed:\n{traceback.format_exc()}")
 
     # ---------- streaming ----------
     def _url(self):

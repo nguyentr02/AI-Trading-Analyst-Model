@@ -8,7 +8,8 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from cryptoai import (advisor, altcoins, auth, backtest, config, data, droprisk, explain, live, market, metrics, model,
-                      notify, paper, portfolio, preview, research_log, signals, stocks, whales)
+                      notify, paper, portfolio, preview, research_log, signals, stockai, stockpaper, stocks,
+                      whales)
 
 ASSETS = config.ROOT / "assets"
 st.set_page_config(page_title="Crypto AI", page_icon=str(ASSETS / "icon.svg"), layout="wide")
@@ -1592,6 +1593,202 @@ def stock_detail(row, live):
             st.caption(f"The {row.rule} rule would be {'in' if row.rule_in_now else 'out'} right now.")
 
 
+def page_stock_signals():
+    st.title("Stock signals")
+    ai = stockai.load()
+    try:
+        a = get_stock_analysis()
+    except Exception as e:
+        st.error(f"Could not load stock history: {e}")
+        return
+    if ai is None:
+        st.info("The stock AI hasn't run yet. It retrains every day after the US close, or run "
+                "`python -m cryptoai stock-ai`.")
+        sig = {}
+    else:
+        sig = ai["signals"]
+        trust = ai["auc"]["2023-now"]
+        with st.container(border=True):
+            st.markdown("**How much to trust the stock AI**")
+            st.caption(f"It predicts the chance each stock is higher 5 trading days from now. Accuracy on data it "
+                       f"never trained on: AUC {ai['auc']['2019-2022']:.3f} in 2019-2022 (worse than a coin flip) and "
+                       f"{trust:.3f} since 2023. Trading on it "
+                       f"{'beat' if ai['trade_on_ai'] else 'did not beat'} simply holding. Treat it as a weak hint; "
+                       f"the trend columns and holding matter more. Updated {when(ai['computed'])}.")
+    rows = []
+    for _, r in a.iterrows():
+        p = sig.get(r["ticker"], {}).get("p_up_5d")
+        rows.append({"Stock": f"{r['ticker']} · {r['name']}", "Long-term trend": "▲ above 200-day" if r["above_200d"]
+                     else "▼ below 200-day", "vs 200-day": r["from_200d"],
+                     "Short-term trend": "▲ above 50-day" if r["above_50d"] else "▼ below 50-day",
+                     "AI: P(up, 5 days)": p, "1 month": r["1m"], "Typical yearly swing": r["vol"]})
+    df = pd.DataFrame(rows)
+    st.dataframe(
+        df.style.format({"vs 200-day": "{:+.1%}", "1 month": "{:+.1%}", "Typical yearly swing": "{:.0%}",
+                         "AI: P(up, 5 days)": "{:.0%}"}, na_rep="–")
+        .map(lambda x: f"color: {UP}" if str(x).startswith("▲") else f"color: {DOWN}" if str(x).startswith("▼") else "",
+             subset=["Long-term trend", "Short-term trend"])
+        .map(lambda x: f"color: {UP}" if isinstance(x, float) and x > 0 else f"color: {DOWN}"
+             if isinstance(x, float) and x < 0 else "", subset=["vs 200-day", "1 month"]),
+        hide_index=True, width="stretch", alt="Trend and AI signal for each US stock",
+        column_config={"AI: P(up, 5 days)": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1)})
+    st.caption("For stocks, testing found holding beat every trading rule (Stock backtest). Use these to decide what "
+               "to buy and when to add in steps, not to jump in and out.")
+
+
+def page_stock_backtest():
+    st.title("Stock backtest")
+    try:
+        a = get_stock_analysis().set_index("ticker")
+    except Exception as e:
+        st.error(f"Could not load stock history: {e}")
+        return
+    bar = st.container(horizontal=True, vertical_alignment="bottom", gap="medium")
+    t = bar.selectbox("Stock", list(a.index), key="stock_bt", format_func=lambda x: f"{x} · {stocks.STOCKS[x]}")
+    rule = bar.segmented_control("Trend rule", [50, 100, 200], key="stock_bt_rule", default=200, required=True,
+                                 format_func=lambda n: f"{n}-day")
+    c = stocks.history(t)
+    hold = (1 + c.pct_change().fillna(0)).cumprod()
+    pos = (c > c.rolling(rule).mean()).astype(float).shift(1).fillna(0)
+    trade = (1 + (pos * c.pct_change() - pos.diff().abs() * stocks.COST).fillna(0)).cumprod()
+    chart = pd.DataFrame({"Hold": 1000 * hold, f"{rule}-day rule": 1000 * trade})
+    chart.index = local(chart.index).tz_localize(None)
+    st.line_chart(chart, color=[BLUE, GREY], height=340, y_label="Balance of $1,000 (USD)", x_label="",
+                  alt=f"{t}: holding vs the {rule}-day trend rule")
+    row = a.loc[t]
+    rows = []
+    for name, key in (("Hold", "hold"), (f"{rule}-day rule", f"sma{rule}")):
+        for label, period in (("choose", "2016-2022"), ("check", "2023-2026")):
+            rows.append({"Strategy": name, "Period": period, "Return": row[f"{key}_{label}_return"],
+                         "Sharpe": row[f"{key}_{label}_sharpe"], "Worst fall": row[f"{key}_{label}_worst"]})
+    st.dataframe(pd.DataFrame(rows).style.format({"Return": "{:+.0%}", "Sharpe": "{:.2f}", "Worst fall": "{:+.0%}"},
+                                                 na_rep="–"),
+                 hide_index=True, width="stretch", alt=f"{t} hold vs trend rule by period")
+    st.caption(f"Rule: hold {t} while its daily close is above its {rule}-day average, else cash; 0.1% cost per trade. "
+               "Across all 17 stocks, the best rule (chosen on 2016-2022) beat holding on none in 2023-2026.")
+
+    ai = stockai.load()
+    if ai:
+        st.subheader("Trading on the stock AI")
+        names = {"hold": "Hold all", "ai_gate": "AI risk filter (out below 45%)", "ai_tilt": "AI-sized"}
+        rows = [{"Strategy": names[k], "Period": p, "Return": v[p]["return"], "Sharpe": v[p]["sharpe"],
+                 "Worst fall": v[p]["worst"]} for k, v in ai["strategies"].items() for p in v]
+        st.dataframe(pd.DataFrame(rows).style.format({"Return": "{:+.0%}", "Sharpe": "{:.2f}", "Worst fall": "{:+.0%}"}),
+                     hide_index=True, width="stretch", alt="Stock AI strategies vs holding")
+        st.caption(f"Equal-weight basket of all the stocks, decisions on Mondays. The AI variant chosen on 2019-2022 "
+                   f"({names[ai['chosen']]}) {'beat' if ai['trade_on_ai'] else 'did not beat'} holding in both periods.")
+
+
+def page_stock_portfolio():
+    st.title("Stock portfolio")
+    holdings, cash = stocks.load_portfolio()
+    try:
+        a = get_stock_analysis()
+        live = {t: p[0] for t, p in get_stock_prices().items()}
+    except Exception:
+        a, live = pd.DataFrame(), {}
+    if holdings:
+        adv, total, plan = stocks.advise(holdings, cash, a, live)
+        cards = st.container(horizontal=True, gap="medium")
+        invested = (adv["shares"] * adv["avg_cost"]).sum()
+        cards.metric("Total value", f"${total:,.2f}", border=True)
+        cards.metric("Profit / loss", f"{adv['pnl'].sum():+,.2f}", f"{adv['pnl'].sum() / invested:+.2%}" if invested else None,
+                     border=True)
+        cards.metric("Spare cash", f"${cash:,.2f}", border=True)
+        st.subheader("Advice")
+        st.dataframe(
+            pd.DataFrame({"Stock": adv["ticker"], "Advice": adv["action"], "Value": adv["value"], "Share": adv["weight"],
+                          "P&L %": adv["pnl_pct"], "Why": adv["reason"]})
+            .style.format({"Value": "${:,.2f}", "P&L %": "{:+.1%}"}, na_rep="–")
+            .map(lambda x: "color: #F4B000; font-weight: 600" if x == "TRIM" else "", subset=["Advice"]),
+            hide_index=True, width="stretch", alt="Advice for each stock you hold",
+            column_config={"Share": st.column_config.ProgressColumn("Share of portfolio", format="percent", min_value=0,
+                                                                    max_value=1),
+                           "Why": st.column_config.TextColumn(width="large")})
+        if plan:
+            st.info(plan, icon=":material/savings:")
+        st.caption("Prices from Binance's stock futures. Hold-first advice: in testing, holding beat trend-rule trading "
+                   "on every stock here. Not financial advice.")
+    else:
+        with st.container(border=True):
+            st.markdown("**No stocks yet**")
+            st.caption("Add what you own below to get hold-first advice for your stocks.")
+    with st.expander("Edit stocks and cash", icon=":material/edit:", expanded=not holdings):
+        new_cash = st.number_input("Spare cash for stocks (USD)", min_value=0.0, value=float(cash), step=50.0)
+        edited = st.data_editor(
+            pd.DataFrame(holdings, columns=["ticker", "shares", "avg_cost"]), num_rows="dynamic", width="stretch",
+            key="stock_holdings_editor",
+            column_config={"ticker": st.column_config.SelectboxColumn("Stock", options=list(stocks.STOCKS), required=True),
+                           "shares": st.column_config.NumberColumn("Shares", format="%.4f", min_value=0, required=True),
+                           "avg_cost": st.column_config.NumberColumn("Average cost (USD)", format="%.2f", min_value=0,
+                                                                     required=True)})
+        if st.button("Save", icon=":material/save:", type="primary", key="stock_save"):
+            stocks.save_portfolio(edited.dropna().to_dict("records"), new_cash)
+            st.toast("Saved", icon=":material/check:")
+            st.rerun()
+        st.caption("Saved only on this computer, in stock_portfolio.json.")
+
+
+def page_stock_paper():
+    st.title("Stock paper trading")
+    acct = stockpaper.load()
+    if acct is None:
+        with st.container(border=True, width=560):
+            st.markdown("**Start a 4-week stock paper trial**")
+            st.caption("Five pretend accounts: hold all stocks, all in QQQ, buy in 4 weekly steps, the 200-day trend "
+                       "rule, and the AI risk filter. Daily decisions after the US close, at Binance stock prices. "
+                       "Nothing real is traded.")
+            cash = st.number_input("Starting balance per account (USD)", min_value=100.0, value=1000.0, step=100.0,
+                                   key="stock_paper_cash")
+            if st.button("Start trial", type="primary", icon=":material/play_arrow:", key="stock_paper_start"):
+                with st.spinner("Starting…"):
+                    stockpaper.open_account(cash)
+                st.rerun()
+        return
+    stock_paper_dashboard()
+
+
+@st.fragment(run_every=30)
+def stock_paper_dashboard():
+    acct = stockpaper.load()
+    try:
+        prices = {t: p[0] for t, p in get_stock_prices().items()}
+    except Exception:
+        st.warning("Could not reach Binance for prices.")
+        return
+    v = stockpaper.value(acct, prices)
+    start, names = acct["start_cash"], acct["names"]
+    st.caption(f"Trial: {local(acct['opened']):%b %d, %H:%M} → {when(acct['ends'])}. Decisions once a day after the "
+               "US close; prices from Binance's stock futures. Nothing real is traded.")
+    cards = st.container(horizontal=True, gap="medium")
+    for k in sorted(v, key=lambda k: -v[k]):
+        cards.metric(names[k], f"${v[k]:,.2f}", f"{v[k] - start:+,.2f} ({v[k] / start - 1:+.2%})", border=True)
+    hist = stockpaper.balance_history()
+    if len(hist) > 1:
+        h = hist.set_index(local(hist["time"]).dt.tz_localize(None))[list(names)].rename(columns=names)
+        st.line_chart(h, height=300, y_label="Balance (USD)", x_label="", alt="Balance of every stock paper account")
+    with st.expander("What each account does", icon=":material/info:"):
+        st.markdown(
+            "- **Hold all**: every stock (ETFs excluded) bought equally at the start, never sold.\n"
+            "- **Nasdaq-100 ETF**: all in QQQ, never sold.\n"
+            "- **Buy in 4 weekly steps**: the same stocks, bought a quarter at a time each week.\n"
+            "- **200-day trend rule**: each stock held only while above its 200-day average (did not beat holding "
+            "in testing).\n"
+            "- **AI risk filter**: each stock held unless the stock AI's P(up, 5 days) is below 45% (did not beat "
+            "holding in testing).")
+    t = stockpaper.trades().iloc[::-1]
+    if len(t):
+        st.subheader("Trade history")
+        st.dataframe(pd.DataFrame({f"Time ({tz_label()})": local(t["time"]).dt.strftime("%b %d, %H:%M"),
+                                   "Account": t["account"].map(names), "Stock": t["symbol"], "Side": t["side"],
+                                   "Price": t["price"], "Total (USD)": t["total"], "Reason": t["reason"]})
+                     .style.map(lambda x: f"color: {UP}; font-weight: 600" if x == "BUY" else
+                                f"color: {DOWN}; font-weight: 600" if x == "SELL" else "", subset=["Side"]),
+                     hide_index=True, width="stretch", alt="Stock paper trades",
+                     column_config={"Price": st.column_config.NumberColumn(format="dollar"),
+                                    "Total (USD)": st.column_config.NumberColumn(format="dollar")})
+
+
 def page_strategy_lab():
     st.title("Strategy lab")
     st.caption("Every idea tested so far. Unlike a bot marketplace that ranks by the last few days' ROI, each idea "
@@ -1633,6 +1830,11 @@ pages = {
     ],
     "US stocks": [
         st.Page(page_stocks, title="Stock market", icon=":material/show_chart:", url_path="stocks"),
+        st.Page(page_stock_signals, title="Stock signals", icon=":material/bolt:", url_path="stock-signals"),
+        st.Page(page_stock_backtest, title="Stock backtest", icon=":material/history:", url_path="stock-backtest"),
+        st.Page(page_stock_portfolio, title="Stock portfolio", icon=":material/account_balance_wallet:",
+                url_path="stock-portfolio"),
+        st.Page(page_stock_paper, title="Stock paper trading", icon=":material/science:", url_path="stock-paper"),
     ],
     "Research": [
         st.Page(page_patterns, title="Patterns the AI learnt", icon=":material/psychology:", url_path="patterns"),

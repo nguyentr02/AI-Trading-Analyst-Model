@@ -137,6 +137,10 @@ offline again, run the setup command from step 2 without `-Online`.
 | **Altcoins → Altcoin paper trading** | A separate 4-week trial of the same five accounts on those six altcoins |
 | **Altcoins → What the AI learnt** | What testing found about altcoins |
 | **US stocks → Stock market** | 17 US stocks and ETFs listed on Binance (Nvidia, Apple, Microsoft, Uber, SPY, QQQ, ...): live Binance prices and charts, trend and risk, and whether trading them with trend rules beat simply holding (tested on 10 years of Yahoo history) |
+| **US stocks → Stock signals** | Each stock's long- and short-term trend and the stock AI's chance of a rise over 5 trading days, with how far to trust it (weak: holding beat trading on it) |
+| **US stocks → Stock backtest** | Any stock: holding vs a 50/100/200-day trend rule over 10 years, and how trading on the stock AI did |
+| **US stocks → Stock portfolio** | Enter your stocks and spare cash for hold-first advice: flags one stock above 25% of your stock money, notes trend and worst historical fall, and plans cash in 4 weekly steps |
+| **US stocks → Stock paper trading** | A 4-week trial: hold all, all in QQQ, buy in 4 weekly steps, the 200-day rule and the AI risk filter, at Binance stock prices |
 | **Research → Patterns the AI learnt** | Which kinds of patterns the AI relies on (trend, momentum, Bitcoin's moves, ...), and what each one shows: how often the AI expected a rise vs how often the price really rose, on data it never trained on. Refreshed daily |
 | **Research → Strategy lab** | Every idea tested so far, with its result on data it wasn't chosen on, and whether it was adopted |
 
@@ -246,6 +250,13 @@ The **Market** page shows the last hour (whale buys minus sells, open interest c
 events. These alerts are information only; nothing trades on them. Research and our own test found whale data
 mostly signals that a big move is coming, not which way (see `docs/research/whale-tracking.md`). To turn them
 off, set `"whales": false` in `notify.json`. Every event is saved to `logs\whale_events.csv`.
+
+### US stocks
+
+Every day after the US market closes (22:00 UTC, 05:00 Vietnam time), the live service retrains the stock AI,
+runs the stock paper trial's daily step, and alerts you (Windows and Zalo) when a stock crosses its 200-day
+average or moves 8% or more in a day. Retrain by hand with `.venv\Scripts\python -m cryptoai stock-ai`. Your stocks
+are saved in `stock_portfolio.json` and the trial in `paper_stocks\`, both kept off GitHub.
 
 ### Paper trading (4-week trial)
 

@@ -37,19 +37,45 @@ def spot_token(ticker):
     return f"{ticker}B/USDT"
 
 
-def history(ticker, max_age_hours=12):
-    """Daily closes (split- and dividend-adjusted) for up to 10 years, cached in data/stock_<TICKER>_1d.csv."""
+def candles(ticker, max_age_hours=12):
+    """Daily open/high/low/close/volume for up to 10 years, adjusted for splits and dividends (all prices scaled by
+    adjusted close / close), cached in data/stock_<TICKER>_1d.csv."""
     path = config.DATA_DIR / f"stock_{ticker}_1d.csv"
-    if path.exists() and time.time() - path.stat().st_mtime < max_age_hours * 3600:
-        return pd.read_csv(path, index_col=0, parse_dates=True)["close"]
-    r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}", params={"range": "10y", "interval": "1d"},
-                     headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
-    r.raise_for_status()
-    j = r.json()["chart"]["result"][0]
-    close = pd.Series(j["indicators"]["adjclose"][0]["adjclose"],
-                      index=pd.to_datetime(j["timestamp"], unit="s", utc=True).normalize(), name="close").dropna()
-    close.to_frame().to_csv(path)
-    return close
+    cached = pd.read_csv(path, index_col=0, parse_dates=True) if path.exists() else None
+    if cached is not None and "open" in cached and time.time() - path.stat().st_mtime < max_age_hours * 3600:
+        return cached
+    j = None
+    for attempt in range(4):  # Yahoo drops connections when asked too quickly
+        try:
+            r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
+                             params={"range": "10y", "interval": "1d"}, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+            r.raise_for_status()
+            j = r.json()["chart"]["result"][0]
+            break
+        except (requests.RequestException, ValueError, KeyError, TypeError):
+            time.sleep(2 * (attempt + 1))
+    if j is None:
+        if cached is not None and "open" in cached:
+            return cached  # stale but usable
+        raise RuntimeError(f"could not download {ticker} history from Yahoo")
+    q = j["indicators"]["quote"][0]
+    df = pd.DataFrame({k: q[k] for k in ("open", "high", "low", "close", "volume")},
+                      index=pd.to_datetime(j["timestamp"], unit="s", utc=True).normalize())
+    adj = pd.Series(j["indicators"]["adjclose"][0]["adjclose"], index=df.index)
+    factor = adj / df["close"]
+    for k in ("open", "high", "low", "close"):
+        df[k] = df[k] * factor
+    df = df.dropna()
+    df = df[~df.index.duplicated(keep="last")]
+    df.index.name = "time"
+    df.to_csv(path)
+    time.sleep(0.5)
+    return df
+
+
+def history(ticker, max_age_hours=12):
+    """Daily adjusted closes for up to 10 years."""
+    return candles(ticker, max_age_hours)["close"]
 
 
 def live_prices(tickers=STOCKS):
@@ -120,6 +146,102 @@ def analyse_all():
             rows.append({"ticker": t, "name": STOCKS[t], "error": str(e)})
         time.sleep(0.2)
     return pd.DataFrame(rows)
+
+
+PORTFOLIO = config.ROOT / "stock_portfolio.json"  # your stock holdings and spare cash; kept off GitHub
+MAX_WEIGHT = 0.25  # above this share of the stock portfolio, one stock is flagged as concentrated
+
+
+def load_portfolio():
+    import json
+    try:
+        p = json.loads(PORTFOLIO.read_text())
+        return p.get("holdings", []), float(p.get("cash", 0.0))
+    except (OSError, ValueError):
+        return [], 0.0
+
+
+def save_portfolio(holdings, cash):
+    import json
+    with config.atomic(PORTFOLIO) as tmp:
+        tmp.write_text(json.dumps({"holdings": holdings, "cash": cash}, indent=2))
+
+
+def advise(holdings, cash, analysis, prices):
+    """Hold-first advice per holding, plus a plan for spare cash. Testing found holding beat trend-rule trading on
+    every stock here, so the advice never says sell on a trend signal; it flags concentration and risk instead."""
+    a = analysis.set_index("ticker") if len(analysis) else analysis
+    rows, total = [], cash
+    for h in holdings:
+        t = h["ticker"].upper()
+        px = prices.get(t) or (a.loc[t, "close"] if t in a.index else float(h["avg_cost"]))
+        rows.append({"ticker": t, "shares": float(h["shares"]), "avg_cost": float(h["avg_cost"]), "price": px,
+                     "value": float(h["shares"]) * px})
+        total += rows[-1]["value"]
+    for r in rows:
+        r["weight"] = r["value"] / total if total else 0.0
+        r["pnl"] = r["value"] - r["shares"] * r["avg_cost"]
+        r["pnl_pct"] = r["price"] / r["avg_cost"] - 1 if r["avg_cost"] else float("nan")
+        info = a.loc[r["ticker"]] if r["ticker"] in a.index else None
+        if r["weight"] > MAX_WEIGHT:
+            r["action"] = "TRIM"
+            r["reason"] = (f"{r['weight']:.0%} of your stock money is in this one stock. Consider trimming to about "
+                           f"{MAX_WEIGHT:.0%} or less, so one bad fall can't hurt too much.")
+        elif info is None:
+            r["action"], r["reason"] = "HOLD", "Not tracked here; no trend or risk data."
+        elif not info["above_200d"]:
+            r["action"] = "HOLD"
+            r["reason"] = (f"Below its 200-day average ({info['from_200d']:+.0%}). In testing, selling on that did not "
+                           "beat holding; check that the reason you own it still holds.")
+        else:
+            r["action"] = "HOLD"
+            r["reason"] = f"Uptrend ({info['from_200d']:+.0%} vs its 200-day average). Holding beat trading in testing."
+        if info is not None:
+            r["reason"] += f" Worst fall in 10 years: {info['worst_10y']:.0%}."
+    plan = None
+    if cash >= config.MIN_TRADE_USDT * 4:
+        plan = (f"Invest the ${cash:,.0f} in 4 weekly steps of ${cash / 4:,.0f} rather than all at once (buying in steps "
+                f"beat a lump sum when prices fell). Putting part in an index ETF (SPY or QQQ) spreads the risk.")
+    return pd.DataFrame(rows), total, plan
+
+
+ALERT_STATE = config.LOG_DIR / "stock_alerts.json"
+BIG_MOVE = 0.08  # a daily close this far from the previous one is alerted
+
+
+def alerts(notify_fn):
+    """After a US close: alert when a stock crosses its 200-day average or moves BIG_MOVE+ in a day (once each)."""
+    import json
+    try:
+        state = json.loads(ALERT_STATE.read_text())
+    except (OSError, ValueError):
+        state = {}
+    sent = []
+    for t, name in STOCKS.items():
+        c = history(t, max_age_hours=1)
+        if len(c) < 202:
+            continue
+        day = str(c.index[-1].date())
+        ma = c.rolling(200).mean()
+        above_now, above_before = c.iloc[-1] > ma.iloc[-1], c.iloc[-2] > ma.iloc[-2]
+        move = c.iloc[-1] / c.iloc[-2] - 1
+        msgs = []
+        if above_now != above_before:
+            msgs.append(f"crossed {'above' if above_now else 'below'} its 200-day average (${ma.iloc[-1]:,.2f}); "
+                        f"close ${c.iloc[-1]:,.2f}")
+        if abs(move) >= BIG_MOVE:
+            msgs.append(f"moved {move:+.1%} in one day, to ${c.iloc[-1]:,.2f}")
+        for m in msgs:
+            key = f"{t}|{day}|{m[:12]}"
+            if key not in state:
+                state[key] = True
+                sent.append(f"{t} ({name}) {m}")
+    if sent:
+        notify_fn("US stocks: " + ", ".join(s.split(" ")[0] for s in sent), "\n".join(sent) +
+                  "\n(Information only. In testing, trading on trend crossings did not beat holding.)")
+    with config.atomic(ALERT_STATE) as tmp:
+        tmp.write_text(json.dumps(dict(list(state.items())[-500:]), indent=1))
+    return sent
 
 
 def momentum_test(top=5):

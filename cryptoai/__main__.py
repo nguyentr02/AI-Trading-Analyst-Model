@@ -17,6 +17,7 @@ def main():
     sub.add_parser("live", help="always-on service: learn and signal at every candle close, catch up after downtime")
     sub.add_parser("advice", help="buy / sell / hold advice for your saved portfolio")
     sub.add_parser("explain", help="what patterns the AI has learnt, and whether they held on unseen data")
+    sub.add_parser("stock-ai", help="retrain and test the US stock AI, and save its signals")
     login = sub.add_parser("set-login", help="set the username and password for opening the dashboard online")
     login.add_argument("--username", help="asked for if left out")
     sub.add_parser("tunnel", help="put the dashboard online via a Cloudflare tunnel and send you the link")
@@ -38,6 +39,16 @@ def main():
             print(f"Training {name} ({spec['label']}) ...")
             for k, v in model.train(name).items():
                 print(f"  {k}: {v}")
+
+    elif args.cmd == "stock-ai":
+        from . import stockai
+        r = stockai.train_and_test()
+        print(f"AUC on unseen data: {r['auc']['2019-2022']:.3f} (2019-2022), {r['auc']['2023-now']:.3f} (2023-now)")
+        for k, v in r["strategies"].items():
+            print(f"  {k:<8} Sharpe {v['2019-2022']['sharpe']:.2f} / {v['2023-now']['sharpe']:.2f}")
+        print(f"Trading on the AI {'beats' if r['trade_on_ai'] else 'does not beat'} holding.")
+        for t, s in sorted(r["signals"].items(), key=lambda kv: -kv[1]["p_up_5d"]):
+            print(f"  {t:<6} P(up, 5 days) {s['p_up_5d']:.0%}")
 
     elif args.cmd == "explain":
         from . import explain
