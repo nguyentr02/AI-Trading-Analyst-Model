@@ -239,7 +239,17 @@ def _smart_trade(p, candles, cash, fee, rules=SMART):
             peak = 0.0
 
         # 4. Sell signal: all of it, or half if the 3-day view still expects more to come.
-        if coins > 0 and p1 <= rules["sell_below"]:
+        # Optional fee guard (experiments/fee_guard.py): don't sell when the sale would not cover the fees, unless
+        # the loss is deep enough to count as a stop.
+        guard, hold = rules.get("fee_guard"), False
+        if coins > 0 and p1 <= rules["sell_below"] and guard:
+            net_if_sold = px * (1 - fee) / (cost / coins) - 1  # cost already includes the buy fee
+            if net_if_sold < 0:
+                above_buy = px >= cost / coins / (1 + fee)  # price above the price paid (before fees)
+                stop = guard.get("stop")
+                hold = (guard["mode"] == "tiny_profit" and above_buy) or (
+                    guard["mode"] == "no_loss" and not (stop is not None and net_if_sold <= -stop))
+        if coins > 0 and p1 <= rules["sell_below"] and not hold:
             if p3 >= rules["keep_half_if_3day"]:
                 if not half_sold:
                     sell(when, px, 0.5, "SELL half", f"next day looks weak ({p1:.0%}) but next 3 days still up ({p3:.0%})")

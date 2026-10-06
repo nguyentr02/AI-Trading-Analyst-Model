@@ -65,6 +65,10 @@ LOG = pd.DataFrame([
     ("2026-10-06", "Learnt policy", "AI learns what/when/how much to buy and sell: return model + 216 sizing "
      "policies searched on 2022-2024", "Sharpe 0.69 vs 0.95 (50-day rule); also behind on 2022-2024 (0.91 vs "
      "0.98); deflated Sharpe 3%", NOT_ADOPTED, "experiments/policy_learning.py"),
+    ("2026-10-06", "Trading rules", "Don't sell when the sale wouldn't cover the fees (unless a stop is needed)",
+     "Tiny-profit guard: Sharpe 1.079 vs 1.085 (2022-2024), 0.450 vs 0.416 (2025-2026), about neutral. "
+     "Never selling at a loss unless -5%/-10%: worst fall -44%/-48% vs -38% in 2022", NOT_ADOPTED,
+     "experiments/fee_guard.py"),
     ("2026-10-06", "Diagnostic", "Which patterns the AI relies on (2025-2026, unseen)", "Mostly Bitcoin's "
      "short-term moves reversing; 15-minute patterns add ~nothing on new data", FINDING, "cryptoai/explain.py"),
 ], columns=["Date", "Area", "Idea", "Result (data not used for choosing)", "Verdict", "Details"])
