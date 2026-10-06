@@ -1996,18 +1996,28 @@ def page_stock_portfolio():
             st.caption("Add what you own below to get hold-first advice for your stocks.")
     with st.expander("Edit stocks and cash", icon=":material/edit:", expanded=not holdings):
         new_cash = st.number_input("Spare cash for stocks (USD)", min_value=0.0, value=float(cash), step=50.0)
+        current = pd.DataFrame(holdings, columns=["ticker", "shares", "avg_cost"])
+        current["total_paid"] = current["shares"] * current["avg_cost"]  # stored as average cost; edited as a total
         edited = st.data_editor(
-            pd.DataFrame(holdings, columns=["ticker", "shares", "avg_cost"]), num_rows="dynamic", width="stretch",
+            current[["ticker", "shares", "total_paid"]], num_rows="dynamic", width="stretch",
             key="stock_holdings_editor",
             column_config={"ticker": st.column_config.SelectboxColumn("Stock", options=list(stocks.STOCKS), required=True),
-                           "shares": st.column_config.NumberColumn("Shares", format="%.4f", min_value=0, required=True),
-                           "avg_cost": st.column_config.NumberColumn("Average cost (USD)", format="%.2f", min_value=0,
-                                                                     required=True)})
+                           "shares": st.column_config.NumberColumn("Shares", format="%.4f", min_value=0, required=True,
+                                                                   help="How many shares you own (fractions allowed)."),
+                           "total_paid": st.column_config.NumberColumn(
+                               "Total paid (USD)", format="%.2f", min_value=0, required=True,
+                               help="Everything you paid for these shares in total, including fees. The average "
+                                    "price per share is worked out from it.")})
         if st.button("Save", icon=":material/save:", type="primary", key="stock_save"):
-            stocks.save_portfolio(edited.dropna().to_dict("records"), new_cash)
+            rows = edited.dropna()
+            rows = rows[rows["shares"] > 0]
+            stocks.save_portfolio([{"ticker": r.ticker, "shares": float(r.shares),
+                                    "avg_cost": float(r.total_paid) / float(r.shares)} for r in rows.itertuples()],
+                                  new_cash)
             st.toast("Saved", icon=":material/check:")
             st.rerun()
-        st.caption("Saved only on this computer, in stock_portfolio.json.")
+        st.caption("Enter the shares and the total you paid for them; the average price per share is worked out for "
+                   "you. Saved only on this computer, in stock_portfolio.json.")
 
 
 def page_stock_paper():
