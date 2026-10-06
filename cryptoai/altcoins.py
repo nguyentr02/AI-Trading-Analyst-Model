@@ -4,6 +4,7 @@ Nothing here trades. Testing on 2026-10-06 (experiments/altcoins_near_zec.py, ex
 found that the AI reads NEAR and ZEC only slightly better than a coin flip, that the 50-day trend rule beat it
 by a wide margin on them, and that the trend rule on the most-traded alts did far worse than on BTC/ETH/BNB/SOL.
 """
+import json
 import time
 
 import joblib
@@ -11,7 +12,12 @@ import pandas as pd
 
 from . import config, data, droprisk, features, model
 
-WATCH = ["NEAR/USDT", "ZEC/USDT"]  # alts with downloaded history, for the experimental reading
+# Altcoins with full history downloaded: the experimental AI reading and the altcoin paper trial use these.
+# NEAR and ZEC were tested (experiments/altcoins_near_zec.py); the others are large, liquid, long-listed alts.
+WATCH = ["NEAR/USDT", "ZEC/USDT", "XRP/USDT", "DOGE/USDT", "AVAX/USDT", "LINK/USDT"]
+COLORS = {"NEAR/USDT": "#00C08B", "ZEC/USDT": "#F4B728", "XRP/USDT": "#23292F", "DOGE/USDT": "#C2A633",
+          "AVAX/USDT": "#E84142", "LINK/USDT": "#2A5ADA"}
+SIGNALS_FILE = config.LOG_DIR / "alt_signals.json"
 MIN_VOLUME = 20e6  # USDT per day: below this, prices are easy to push around
 NOT_ALTS = {"USDC", "FDUSD", "TUSD", "USDP", "DAI", "EUR", "EURI", "AEUR", "USDE", "XUSD", "BFUSD", "PAXG", "WBTC",
             "WBETH", "USD1", "RLUSD", "USDS", "BTC", "ETH", "BNB", "SOL"}
@@ -60,31 +66,66 @@ def scan(top=15):
     return pd.DataFrame(out).sort_values("daily_vol", ascending=False).head(top)
 
 
-def readings(symbols=WATCH):
+def _predict(bundle, row):
+    return float(bundle["model"].predict_proba(row.reindex(columns=bundle["features"]))[:, 1][0])
+
+
+def compute(symbols=WATCH, refresh=True):
     """Experimental: the live models (trained on BTC/ETH/BNB/SOL) applied to each alt, plus its trend status.
 
-    Downloads any new candles for the alts first. The cross-coin rank feature is computed among the 4 coins plus
-    the alts, slightly different from training, which is one more reason to treat this as experimental.
+    Per alt, at the last closed candles: P(up, next 1 day) from the 4h model, P(up, next 3 days) from the daily
+    model, the drop warning, and the daily close vs its 50-day average. Downloads new candles first (refresh) and
+    saves the result to logs/alt_signals.json, which the dashboard and the altcoin paper trial read. The cross-coin
+    rank feature is computed among the 4 coins plus the alts, slightly different from training, which is one more
+    reason to treat this as experimental.
     """
-    p1 = model.load("4h")
-    pdrop = joblib.load(droprisk.MODEL_FILE) if droprisk.MODEL_FILE.exists() else None
-    for s in symbols:
-        for tf in ("4h", "1d", *config.INTRADAY_TIMEFRAMES):
-            data.update(s, tf)
+    if refresh:
+        for s in symbols:
+            for tf in ("4h", "1d", *config.INTRADAY_TIMEFRAMES):
+                data.update(s, tf)
     every = [*config.SYMBOLS, *symbols]
-    raw = {s: data.drop_open_candle(data.load_cached(s, "4h"), "4h").tail(400) for s in every}
-    since = min(df.index[0] for df in raw.values()) - pd.Timedelta("2D")
-    feats = features.build_all(raw, data.intraday(False, since=since, symbols=every))
-    out = []
+    m4, m1d = model.load("4h"), model.load("1d")
+    mdrop = joblib.load(droprisk.MODEL_FILE) if droprisk.MODEL_FILE.exists() else None
+    raw4 = {s: data.drop_open_candle(data.load_cached(s, "4h"), "4h").tail(400) for s in every}
+    since = min(df.index[0] for df in raw4.values()) - pd.Timedelta("2D")
+    f4 = features.build_all(raw4, data.intraday(False, since=since, symbols=every))
+    raw1d = {s: data.drop_open_candle(data.load_cached(s, "1d"), "1d").tail(400) for s in every}
+    f1d = features.build_all(raw1d, None)
+    coins = {}
     for s in symbols:
-        last = feats[s].iloc[[-1]]
-        d = data.drop_open_candle(data.load_cached(s, "1d"), "1d")["close"]
-        avg50 = d.tail(50).mean()
-        row = {"symbol": s, "candle": last.index[0], "price": float(raw[s]["close"].iloc[-1]),
-               "above_50d": bool(d.iloc[-1] > avg50), "from_50d": float(d.iloc[-1] / avg50 - 1)}
-        if p1 is not None:
-            row["p_up_1d"] = float(p1["model"].predict_proba(last.reindex(columns=p1["features"]))[:, 1][0])
-        if pdrop is not None:
-            row["p_drop"] = float(pdrop["model"].predict_proba(last.reindex(columns=pdrop["features"]))[:, 1][0])
-        out.append(row)
-    return pd.DataFrame(out)
+        last4, last1d = f4[s].iloc[[-1]], f1d[s].iloc[[-1]]
+        d = raw1d[s]["close"]
+        avg = {n: float(d.tail(n).mean()) for n in (20, 50, 100, 200)}
+        coins[s] = {"candle_4h": str(last4.index[0]), "candle_1d": str(last1d.index[0]),
+                    "price": float(raw4[s]["close"].iloc[-1]), "daily_close": float(d.iloc[-1]),
+                    "above": {str(n): bool(d.iloc[-1] > a) for n, a in avg.items()},
+                    "from_50d": float(d.iloc[-1] / avg[50] - 1),
+                    "p_up_1d": _predict(m4, last4) if m4 else None,
+                    "p_up_3d": _predict(m1d, last1d) if m1d else None,
+                    "p_drop": _predict(mdrop, last4) if mdrop else None}
+    out = {"updated": pd.Timestamp.now(tz="UTC").isoformat(timespec="seconds"), "coins": coins}
+    with config.atomic(SIGNALS_FILE) as tmp:
+        tmp.write_text(json.dumps(out, indent=2))
+    return out
+
+
+def load():
+    try:
+        return json.loads(SIGNALS_FILE.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def readings(max_age=pd.Timedelta("4h30min")):
+    """The latest readings as a table, one row per alt: the saved ones (the live service refreshes them at every
+    4h close) if recent and complete, otherwise freshly computed."""
+    saved = load()
+    if (saved is None or set(saved["coins"]) != set(WATCH)
+            or pd.Timestamp.now(tz="UTC") - pd.Timestamp(saved["updated"]) > max_age):
+        saved = compute()
+    rows = []
+    for s, r in saved["coins"].items():
+        rows.append({"symbol": s, "candle": pd.Timestamp(r["candle_4h"]), "price": r["price"],
+                     "above_50d": r["above"]["50"], "from_50d": r["from_50d"], "p_up_1d": r["p_up_1d"],
+                     "p_up_3d": r["p_up_3d"], "p_drop": r["p_drop"]})
+    return pd.DataFrame(rows)

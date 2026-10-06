@@ -213,7 +213,7 @@ for k in ("model", "sym", "chart_interval", "chart_ind"):
 COIN_NAMES = {"BTC/USDT": "Bitcoin", "ETH/USDT": "Ethereum", "BNB/USDT": "BNB", "SOL/USDT": "Solana"}
 def coin_label(sym):
     """'Bitcoin  BTC', or just 'BNB' when the name and ticker are the same."""
-    name, tick = COIN_NAMES.get(sym, sym), coin(sym)
+    name, tick = COIN_NAMES.get(sym, coin(sym)), coin(sym)
     return tick if name == tick else f"{name}  {tick}"
 
 
@@ -1005,22 +1005,37 @@ def portfolio_overview(holdings):
 PAPER_COLORS = {"ai": "#0052FF", "trend_dip": "#F4B000", "trend_ai": "#C855E8", "trend": "#8A919E", "hold": "#B5BAC3"}
 
 
-def page_paper():
-    st.title("Paper trading")
-    acct = paper.load()
+BOOKS = {b.key: b for b in paper.BOOKS}
+
+
+def page_paper(book=paper.MAIN):
+    st.title("Paper trading" if book is paper.MAIN else "Altcoin paper trading")
+    if book is not paper.MAIN:
+        st.caption("Experimental: the AI was trained on BTC, ETH, BNB and SOL and is applied to these altcoins as is. "
+                   "In testing on NEAR and ZEC, the 50-day trend rule did far better than the AI.")
+    acct = paper.load(book)
     if acct is None:
         with st.container(border=True, width=560):
             st.markdown("**Start a 4-week paper trial**")
-            st.caption("Five pretend accounts start together and trade live: AI Smart, Trend + dip-buy, Trend × AI + "
-                       "dip-buy, and two benchmarks (trend rule, buy & hold). Nothing real is bought or sold.")
-            cash = st.number_input("Starting balance per account (USDT)", min_value=100.0, value=1000.0, step=100.0)
-            if st.button("Start trial", type="primary", icon=":material/play_arrow:"):
-                paper.open_account(cash)
-                paper.step_ai()
-                paper.step_daily()
+            st.caption(f"Coins: {', '.join(coin(s) for s in book.symbols)}. Five pretend accounts start together and "
+                       "trade live: AI Smart, Trend + dip-buy, Trend × AI + dip-buy, and two benchmarks (trend rule, "
+                       "buy & hold). Nothing real is bought or sold.")
+            cash = st.number_input("Starting balance per account (USDT)", min_value=100.0, value=1000.0, step=100.0,
+                                   key=f"paper_cash_{book.key}")
+            if st.button("Start trial", type="primary", icon=":material/play_arrow:", key=f"paper_start_{book.key}"):
+                with st.spinner("Starting…"):
+                    if book is not paper.MAIN:
+                        altcoins.compute()
+                    paper.open_account(cash, book=book)
+                    paper.step_ai(book=book)
+                    paper.step_daily(book=book)
                 st.rerun()
         return
-    paper_dashboard()
+    paper_dashboard(book.key)
+
+
+def page_paper_alts():
+    page_paper(paper.ALTS)
 
 
 def _live_prices():
@@ -1030,10 +1045,29 @@ def _live_prices():
     return dict(zip(tk["symbol"], tk["price"]))
 
 
+@st.cache_data(ttl=10, show_spinner=False)
+def _alt_prices(symbols):
+    return data.prices(list(symbols))
+
+
+def _ai_column(book):
+    """{symbol: 'arrow P(up)'} for the wallet table: confirmed signals (main coins) or the altcoin readings."""
+    if book is paper.MAIN:
+        sig = get_signals("4h", model_version("4h")).set_index("symbol")
+        return {s: SIGNAL_ARROW[sig.loc[s, "signal"]] + f" {sig.loc[s, 'prob_up']:.0%}" for s in book.symbols}
+    coins = (altcoins.load() or {}).get("coins", {})
+    out = {}
+    for s in book.symbols:
+        p = coins.get(s, {}).get("p_up_1d")
+        out[s] = "" if p is None else SIGNAL_ARROW[signals.label(p)] + f" {p:.0%}"
+    return out
+
+
 @st.fragment(run_every=10)
-def paper_dashboard():
-    acct = paper.load()
-    prices = _live_prices()
+def paper_dashboard(book_key="main"):
+    book = BOOKS[book_key]
+    acct = paper.load(book)
+    prices = _live_prices() if book is paper.MAIN else _alt_prices(book.symbols)
     v = paper.value(acct, prices)
     start, names = acct["start_cash"], acct["names"]
     opened, ends = pd.Timestamp(acct["opened"]), pd.Timestamp(acct["ends"])
@@ -1042,7 +1076,7 @@ def paper_dashboard():
         left = ends - now
         st.caption(f"Trial: {opened:%b %d, %H:%M} → {ends:%b %d, %H:%M} UTC · day {(now - opened).days + 1} of "
                    f"{(ends - opened).days} · {left.days} days {left.seconds // 3600} h left. Each account started with "
-                   f"${start:,.0f} (${start / len(config.SYMBOLS):,.0f} per coin). Fills at the live Binance price with "
+                   f"${start:,.0f} (${start / len(book.symbols):,.0f} per coin). Fills at the live Binance price with "
                    f"{acct['fee']:.1%} fee and {acct['slippage']:.2%} slippage. Nothing real is traded.")
     else:
         st.badge("Trial finished", icon=":material/flag:", color="blue")
@@ -1053,7 +1087,7 @@ def paper_dashboard():
     for a in sorted(v, key=lambda k: -v[k]):
         cards.metric(names[a], f"${v[a]:,.2f}", f"{v[a] - start:+,.2f} ({v[a] / start - 1:+.2%})", border=True)
 
-    hist = paper.balance_history()
+    hist = paper.balance_history(book)
     if len(hist):
         live_row = pd.DataFrame([{"time": now, **v}])
         h = pd.concat([hist, live_row], ignore_index=True)
@@ -1072,8 +1106,10 @@ def paper_dashboard():
     with st.expander("What each account does", icon=":material/info:"):
         st.markdown(
             "- **AI Smart**: invests by the AI's next-1-day confidence, sells half if the 3-day view is still up, takes "
-            "half profit at +10%. Decides at every 4h close and on the live readings once an action holds "
-            f"{paper.CONFIRM_MINUTES} minutes (then {paper.COOLDOWN_MINUTES} min per coin; not backtested).\n"
+            "half profit at +10%. " + (
+                "Decides at every 4h close and on the live readings once an action holds "
+                f"{paper.CONFIRM_MINUTES} minutes (then {paper.COOLDOWN_MINUTES} min per coin; not backtested).\n"
+                if book.live else "Decides at every 4h close.\n") +
             "- **Trend + dip-buy**: holds a coin while its daily close is above its 50-day average (the rule with the "
             "highest return in testing).\n"
             "- **Trend × AI + dip-buy**: average of the 20/50/100/200-day trend rules, sized by the AI's next-3-days "
@@ -1082,11 +1118,11 @@ def paper_dashboard():
             "sleeve, sold 4 hours later (tested in experiments/shock_dip_buy.py).\n"
             "- **Benchmarks**: the 50-day trend rule alone, and buy & hold.")
 
-    which = st.segmented_control("Account", list(names), default="ai", key="paper_account",
+    which = st.segmented_control("Account", list(names), default="ai", key=f"paper_account_{book.key}",
                                  format_func=names.get) or "ai"
     st.subheader("Wallet")
     left_col, right_col = st.columns([2.2, 1], gap="large")
-    sig = get_signals("4h", model_version("4h")).set_index("symbol")
+    ai_col = _ai_column(book)
     rows = []
     for sym, sl in acct["accounts"][which].items():
         px = prices[sym]
@@ -1095,7 +1131,7 @@ def paper_dashboard():
         rows.append({"Coin": coin_label(sym), "Amount": qty, "Avg cost": cost / qty if qty else None, "Price": px,
                      "Value": val, "P&L": val - cost if qty else None, "P&L %": val / cost - 1 if qty else None,
                      "Invested": val / (val + sl["cash"]) if val + sl["cash"] else 0,
-                     "AI next 1 day": SIGNAL_ARROW[sig.loc[sym, "signal"]] + f" {sig.loc[sym, 'prob_up']:.0%}"})
+                     "AI next 1 day": ai_col[sym]})
     cash = sum(sl["cash"] for sl in acct["accounts"][which].values())
     rows.append({"Coin": "USDT (cash)", "Amount": cash, "Avg cost": None, "Price": 1.0, "Value": cash, "P&L": None,
                  "P&L %": None, "Invested": None, "AI next 1 day": ""})
@@ -1118,13 +1154,14 @@ def paper_dashboard():
         alloc = wallet[wallet["Value"] > 0.01]
         ticks = alloc["Coin"].str.split("  ").str[-1]
         fig = go.Figure(go.Pie(labels=ticks, values=alloc["Value"], hole=0.62, sort=False,
-                               marker=dict(colors=[COIN_COLORS.get(f"{c}/USDT", "#C9CDD4") for c in ticks]),
+                               marker=dict(colors=[{**COIN_COLORS, **altcoins.COLORS}.get(f"{c}/USDT", "#C9CDD4")
+                                                   for c in ticks]),
                                textinfo="label+percent", hovertemplate="%{label}: $%{value:,.2f}<extra></extra>"))
         fig.update_layout(height=240, margin=dict(l=0, r=0, t=0, b=0), showlegend=False)
         st.plotly_chart(fig, width="stretch", alt=f"Allocation of the {names[which]} account")
 
     st.subheader("Trade history")
-    t = paper.trades()
+    t = paper.trades(book)
     t = t[t["account"] == which].iloc[::-1]
     if t.empty:
         st.caption("No trades yet in this account.")
@@ -1148,77 +1185,97 @@ def get_alt_scan():
     return altcoins.scan()
 
 
-@st.cache_data(ttl=900, show_spinner="Running the AI on the watched altcoins…")
+@st.cache_data(ttl=300, show_spinner="Running the AI on the altcoins…")
 def get_alt_readings(version):
     return altcoins.readings()
 
 
 def page_altcoins():
-    st.title("Altcoins")
-    st.caption("Experimental and for information only: the AI does not trade altcoins. Testing found it reads them "
-               "barely better than a coin flip, while the 50-day trend rule did far better on them.")
-
-    st.subheader("AI reading: " + " and ".join(coin(s) for s in altcoins.WATCH))
+    st.title("Altcoin market")
+    st.caption("Experimental: the live AI does not trade altcoins; a separate paper trial does (Altcoins → Paper "
+               "trading). Testing found the AI reads them barely better than a coin flip, while the 50-day trend "
+               "rule did far better on them.")
+    st.subheader("AI reading")
     try:
         r = get_alt_readings(model_version("4h"))
     except Exception as e:
         st.error(f"Could not compute the readings: {e}")
         r = pd.DataFrame()
-    cards = st.columns(max(len(r), 1), gap="medium")
-    for card, row in zip(cards, r.itertuples()):
-        with card.container(border=True):
-            st.markdown(f"#### {coin(row.symbol)}")
-            st.caption(f"Last 4h close ${row.price:,.4g} · {row.candle:%b %d, %H:%M} UTC")
-            line = st.container(horizontal=True, vertical_alignment="center", gap="small")
-            line.markdown("Trend rule (50-day)", width="content")
-            if row.above_50d:
-                line.badge("Hold", icon=":material/trending_up:", color="green")
-            else:
-                line.badge("Cash", icon=":material/trending_down:", color="red")
-            st.caption(f"Daily close {row.from_50d:+.1%} vs its 50-day average. On alts this rule beat the AI.")
-            if hasattr(row, "p_up_1d"):
-                st.progress(float(row.p_up_1d), text=f"AI: P(up, next 1 day) {row.p_up_1d:.0%}")
-            if hasattr(row, "p_drop"):
-                st.progress(min(float(row.p_drop), 1.0), text=f"Drop risk, 3 days {row.p_drop:.0%} "
-                            f"({droprisk.level(row.p_drop)})")
-    st.caption("The AI here is the live model trained on BTC, ETH, BNB and SOL, applied to each altcoin as is.")
-
+    per_row = 3
+    for i in range(0, len(r), per_row):
+        cols = st.columns(per_row, gap="medium")
+        for col, row in zip(cols, r.iloc[i:i + per_row].itertuples()):
+            with col.container(border=True):
+                alt_card(row)
+    st.caption("The AI here is the live model trained on BTC, ETH, BNB and SOL, applied to each altcoin as is. "
+               "Updated at every 4h close.")
     st.subheader("Biggest movers on Binance")
+    alt_scan_table()
+
+
+def alt_card(row):
+    """One altcoin's trend status, AI P(up) and drop risk."""
+    st.markdown(f"#### {coin(row.symbol)}")
+    st.caption(f"Last 4h close ${row.price:,.4g} · {row.candle:%b %d, %H:%M} UTC")
+    line = st.container(horizontal=True, vertical_alignment="center", gap="small")
+    line.markdown("Trend rule (50-day)", width="content")
+    if row.above_50d:
+        line.badge("Hold", icon=":material/trending_up:", color="green")
+    else:
+        line.badge("Cash", icon=":material/trending_down:", color="red")
+    st.caption(f"Daily close {row.from_50d:+.1%} vs its 50-day average.")
+    if pd.notna(row.p_up_1d):
+        st.progress(float(row.p_up_1d), text=f"AI: P(up, next 1 day) {row.p_up_1d:.0%}")
+    if pd.notna(row.p_up_3d):
+        st.progress(float(row.p_up_3d), text=f"AI: P(up, next 3 days) {row.p_up_3d:.0%}")
+    if pd.notna(row.p_drop):
+        st.progress(min(float(row.p_drop), 1.0),
+                    text=f"Drop risk, 3 days {row.p_drop:.0%} ({droprisk.level(row.p_drop)})")
+
+
+def alt_scan_table():
     try:
         s = get_alt_scan()
-        st.dataframe(
-            pd.DataFrame({"Coin": s["symbol"].str.replace("/USDT", ""), "Price": s["price"],
-                          "24h": s["change_24h"], "30d": s["change_30d"], "90d": s["change_90d"],
-                          "Typical daily move": s["daily_vol"], "Days with 10%+ moves (90d)": s["days_10pct"],
-                          "Trend rule": s["above_50d"].map({True: "▲ Hold", False: "▼ Cash"}),
-                          "Volume 24h": s["volume_24h"].map(usd)})
-            .style.format({"24h": "{:+.1%}", "30d": "{:+.0%}", "90d": "{:+.0%}", "Typical daily move": "{:.1%}",
-                           "Price": "${:,.4g}"})
-            .map(lambda x: f"color: {UP}" if isinstance(x, float) and x > 0 else
-                 f"color: {DOWN}" if isinstance(x, float) and x < 0 else "", subset=["24h", "30d", "90d"])
-            .map(lambda x: f"color: {UP}" if str(x).startswith("▲") else f"color: {DOWN}", subset=["Trend rule"]),
-            hide_index=True, width="stretch", alt="Most volatile liquid altcoins on Binance")
-        st.caption(f"Altcoins trading at least {usd(altcoins.MIN_VOLUME)} a day on Binance, ranked by their typical "
-                   "daily move over 30 days (BTC moves about 2% a day). Coins that just doubled usually give much of "
-                   "it back. Refreshed every 30 minutes.")
     except Exception as e:
         st.error(f"Could not scan Binance: {e}")
+        return
+    st.dataframe(
+        pd.DataFrame({"Coin": s["symbol"].str.replace("/USDT", ""), "Price": s["price"],
+                      "24h": s["change_24h"], "30d": s["change_30d"], "90d": s["change_90d"],
+                      "Typical daily move": s["daily_vol"], "Days with 10%+ moves (90d)": s["days_10pct"],
+                      "Trend rule": s["above_50d"].map({True: "▲ Hold", False: "▼ Cash"}),
+                      "Volume 24h": s["volume_24h"].map(usd)})
+        .style.format({"24h": "{:+.1%}", "30d": "{:+.0%}", "90d": "{:+.0%}", "Typical daily move": "{:.1%}",
+                       "Price": "${:,.4g}"})
+        .map(lambda x: f"color: {UP}" if isinstance(x, float) and x > 0 else
+             f"color: {DOWN}" if isinstance(x, float) and x < 0 else "", subset=["24h", "30d", "90d"])
+        .map(lambda x: f"color: {UP}" if str(x).startswith("▲") else f"color: {DOWN}", subset=["Trend rule"]),
+        hide_index=True, width="stretch", alt="Most volatile liquid altcoins on Binance")
+    st.caption(f"Altcoins trading at least {usd(altcoins.MIN_VOLUME)} a day on Binance, ranked by their typical "
+               "daily move over 30 days (BTC moves about 2% a day). Coins that just doubled usually give much of it "
+               "back. Refreshed every 30 minutes.")
 
-    st.subheader("What the AI learnt about altcoins")
+
+def page_alt_learnt():
+    st.title("What the AI learnt about altcoins")
     st.markdown(
         "- **Reading alts it never trained on:** the AI trained on BTC, ETH, BNB and SOL reads NEAR and ZEC about "
         "as well as BTC: slightly better than a coin flip.\n"
         "- **Training on them too** was chosen on 2022-2024 but did worse on 2025-2026, and it made the AI slightly "
-        "worse on the four main coins. So NEAR and ZEC were not added.\n"
+        "worse on the four main coins. So NEAR and ZEC were not added to the live AI.\n"
         "- **The trend rule wins on alts.** On ZEC's 23x run, the AI kept selling part of the way up; the 50-day "
         "rule held on.\n"
         "- **More coins did not help the trend rule.** The most-traded alts each month are usually the ones in a "
-        "hype cycle (LUNA before its crash, DOGE, PEPE), and the rule got whipsawed on them.")
-    st.markdown("**NEAR and ZEC, 2025-01 to 2026-10, $1000 each** (tested on data the AI never trained on)")
+        "hype cycle (LUNA before its crash, DOGE, PEPE), and the rule got whipsawed on them.\n"
+        "- **Being tested live:** a separate 4-week paper trial runs the same five accounts on "
+        f"{', '.join(coin(s) for s in altcoins.WATCH)} (Altcoins → Paper trading).")
+    st.subheader("NEAR and ZEC, 2025-01 to 2026-10, $1000 each")
+    st.caption("Tested on data the AI never trained on.")
     st.dataframe(altcoins.NEAR_ZEC.style.format({"NEAR $": "${:,.0f}", "ZEC $": "${:,.0f}", "Sharpe (both)": "{:.2f}",
                                                  "AI accuracy (AUC)": "{:.3f}"}, na_rep="–"),
                  hide_index=True, width="stretch", alt="NEAR and ZEC test results")
-    st.markdown("**The 50-day rule on more coins** (picked each month by trading volume, delisted coins included)")
+    st.subheader("The 50-day rule on more coins")
+    st.caption("Coins picked each month by trading volume, delisted coins included.")
     st.dataframe(altcoins.UNIVERSE.style.format({"Sharpe 2022-2024": "{:.2f}", "Sharpe 2025-2026": "{:.2f}",
                                                  "Return 2025-2026": "{:+.1%}"}),
                  hide_index=True, width="stretch", alt="Trend rule on wider coin lists")
@@ -1226,16 +1283,22 @@ def page_altcoins():
                "experiments/altcoins_near_zec.py and experiments/trend_universe.py.")
 
 
-pages = [
-    st.Page(page_market, title="Market", icon=":material/monitoring:", url_path="market", default=True),
-    st.Page(page_signals, title="Signals", icon=":material/bolt:", url_path="signals"),
-    st.Page(page_chart, title="Chart", icon=":material/candlestick_chart:", url_path="chart"),
-    st.Page(page_backtest, title="Backtest", icon=":material/history:", url_path="backtest"),
-    st.Page(page_portfolio, title="Portfolio", icon=":material/account_balance_wallet:", url_path="portfolio"),
-    st.Page(page_paper, title="Paper trading", icon=":material/science:", url_path="paper"),
-    st.Page(page_altcoins, title="Altcoins", icon=":material/rocket_launch:", url_path="altcoins"),
-]
+pages = {
+    "Top coins": [
+        st.Page(page_market, title="Market", icon=":material/monitoring:", url_path="market", default=True),
+        st.Page(page_signals, title="Signals", icon=":material/bolt:", url_path="signals"),
+        st.Page(page_chart, title="Chart", icon=":material/candlestick_chart:", url_path="chart"),
+        st.Page(page_backtest, title="Backtest", icon=":material/history:", url_path="backtest"),
+        st.Page(page_portfolio, title="Portfolio", icon=":material/account_balance_wallet:", url_path="portfolio"),
+        st.Page(page_paper, title="Paper trading", icon=":material/science:", url_path="paper"),
+    ],
+    "Altcoins": [
+        st.Page(page_altcoins, title="Altcoin market", icon=":material/rocket_launch:", url_path="altcoins"),
+        st.Page(page_paper_alts, title="Altcoin paper trading", icon=":material/science:", url_path="altcoins-paper"),
+        st.Page(page_alt_learnt, title="What the AI learnt", icon=":material/school:", url_path="altcoins-learnt"),
+    ],
+}
 if online_request():
-    pages.append(st.Page(page_sign_out, title="Sign out", icon=":material/logout:", url_path="sign-out"))
+    pages["Account"] = [st.Page(page_sign_out, title="Sign out", icon=":material/logout:", url_path="sign-out")]
 nav = st.navigation(pages, position="top")
 nav.run()

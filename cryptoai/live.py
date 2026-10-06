@@ -21,7 +21,7 @@ import pandas as pd
 import requests
 from websockets.sync.client import connect
 
-from . import advisor, config, droprisk, model, notify, paper, preview, signals, whales
+from . import advisor, altcoins, config, droprisk, model, notify, paper, preview, signals, whales
 
 STREAM_URL = "wss://stream.binance.com:9443/stream?streams="
 WAIT_FOR_ALL = 20  # seconds to wait for every symbol's close message before processing anyway
@@ -76,19 +76,24 @@ class LiveService:
         self._save_status()
 
     def paper_trade(self, tf):
-        """Let the paper account act on the fresh signals: the AI at 4h closes, the trend benchmark daily."""
-        if not paper.is_open():
-            return
-        try:
-            done = paper.step_ai() if tf == "4h" else paper.step_daily() if tf == "1d" else []
-        except NETWORK_ERRORS:
-            raise
-        except Exception:
-            log(f"paper trading step failed:\n{traceback.format_exc()}")
-            return
-        for r in done.itertuples() if len(done) else []:
-            log(f"    PAPER {r.account.upper()}: {r.side} {r.symbol} {r.quantity:.6f} at {r.price:,.2f} "
-                f"(${r.total:,.2f}) - {r.reason}")
+        """Let each open paper book act on the fresh signals: the AI at 4h closes, the trend accounts daily."""
+        for book in paper.BOOKS:
+            if not paper.is_open(book):
+                continue
+            try:
+                if book is not paper.MAIN:
+                    altcoins.compute()  # the altcoin readings from the models just retrained
+                step = paper.step_ai if tf == "4h" else paper.step_daily if tf == "1d" else None
+                done = step(book=book) if step else []
+            except NETWORK_ERRORS:
+                raise
+            except Exception:
+                log(f"paper trading step ({book.key}) failed:\n{traceback.format_exc()}")
+                continue
+            tag = "PAPER" if book is paper.MAIN else f"PAPER {book.key.upper()}"
+            for r in done.itertuples() if len(done) else []:
+                log(f"    {tag} {r.account.upper()}: {r.side} {r.symbol} {r.quantity:.6f} at {r.price:,.4f} "
+                    f"(${r.total:,.2f}) - {r.reason}")
 
     def advise(self):
         """Re-check the portfolio advice with the fresh signals and alert on any change (Windows, Zalo)."""
@@ -138,13 +143,21 @@ class LiveService:
                 for r in done.itertuples() if len(done) else []:
                     log(f"    PAPER AI (live): {r.side} {r.symbol} {r.quantity:.6f} at {r.price:,.2f} "
                         f"(${r.total:,.2f}) - {r.reason}")
+            for book in paper.BOOKS[1:]:  # other books: shock dip-buys (no live AI readings for them)
+                if paper.is_open(book):
+                    for r in paper.step_shock(book=book).itertuples():
+                        log(f"    PAPER {book.key.upper()} (live): {r.side} {r.symbol} {r.quantity:.6f} at "
+                            f"{r.price:,.4f} (${r.total:,.2f}) - {r.reason}")
             hour = time.strftime("%Y%m%d%H", time.gmtime())
-            if paper.is_open() and hour != self._paper_hour:  # balance history: one point an hour
-                paper.snapshot()
+            if hour != self._paper_hour:  # balance history: one point an hour
                 self._paper_hour = hour
-                news = paper.milestones(lambda title, body: notify.send(title, body))
-                if news:
-                    log(f"    PAPER: {news}")
+                for book in paper.BOOKS:
+                    if not paper.is_open(book):
+                        continue
+                    paper.snapshot(book=book)
+                    news = paper.milestones(lambda title, body: notify.send(title, body), book=book)
+                    if news:
+                        log(f"    PAPER {book.key.upper()}: {news}")
             self._preview_failing = False
         except Exception as e:
             if not self._preview_failing:  # log the first failure of a run of them, not one per minute

@@ -14,3 +14,5 @@ auth_tokens.json
 tools/
 paper/
 paper_archive_*/
+paper_alts/
+paper_alts_archive_*/
