@@ -140,6 +140,8 @@ offline again, run the setup command from step 2 without `-Online`.
 | **Research → Strategy lab** | Every idea tested so far, with its result on data it wasn't chosen on, and whether it was adopted |
 
 The navbar has three menus: **Top coins** (the pages for BTC, ETH, BNB and SOL), **Altcoins** and **Research**.
+The switch at the top right shows every time in **UTC** or **Vietnam time (UTC+7)**; the choice is kept in the
+page link, so bookmark it to always open in your time zone.
 
 Use the **Prediction** switch (Next 4 hours, Next 1 day, Next 3 days) at the top of Signals, Chart and Backtest.
 
@@ -200,7 +202,7 @@ cost) and your **spare cash** in USDT, and press **Save**. The **AI advice** sec
 
 | Advice | When |
 |---|---|
-| **Sell** (all of it) | You hold the coin and its next-1-day P(up) is 48% or less |
+| **Sell** (all of it) | You hold the coin and its next-1-day P(up) is 48% or less, unless you're up by less than the buy + sell fees (~0.2%): then it says Hold, since selling would lock in a loss. A High drop warning still says Sell |
 | **Hold** | You hold the coin and there is no sell signal |
 | **Buy** (with a suggested amount) | You don't hold the coin and its next-1-day P(up) is 55% or more |
 | **Wait** | No signal, or not enough spare cash |
