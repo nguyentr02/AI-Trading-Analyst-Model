@@ -94,6 +94,12 @@ LOG = pd.DataFrame([
      "trend or steadiest)", "Steadiest chosen (2021-2022: +5% vs -16% for the list) but lagged the list in 2023-2026 "
      "(+172% vs +921%); no one-stock rule beat the list. Shown as 'if you only buy one'", PARTLY,
      "experiments/stock_top_pick.py"),
+    ("2026-10-06", "Model training", "One shared AI trained on crypto and stocks together vs separate AIs",
+     "Worse everywhere: crypto AUC 0.495/0.498 vs 0.520/0.522, stocks 0.460/0.508 vs 0.486/0.520", NOT_ADOPTED,
+     "experiments/shared_brain.py"),
+    ("2026-10-06", "US stocks", "Halve the buy list's exposure on market stress (VIX above VIX3M, credit spreads "
+     "widening, or both)", "Lower Sharpe in both periods (0.66-0.78 vs 0.83; 1.85-2.03 vs 2.05), no smaller worst "
+     "fall", NOT_ADOPTED, "experiments/stock_regime.py"),
     ("2026-10-06", "Execution", "Buy with a limit order 1-3% below the price (wait 1-7 days, else market) instead "
      "of at market", "Every plan paid more on average: crypto +0.00% to +0.34%, stocks +0.16% to +0.97%", NOT_ADOPTED,
      "experiments/entry_price.py"),
