@@ -83,6 +83,16 @@ LOG = pd.DataFrame([
     ("2026-10-06", "US stocks", "Sell everything in a market crash (S&P 500 below its 200-day average, or 10% "
      "below its high)", "Cut the 2020/2022 worst fall (-46% vs -59%) but Sharpe 1.47 / 1.67 vs 1.91 in 2023-2026",
      PARTLY, "experiments/stock_hold_picks.py"),
+    ("2026-10-06", "US stocks", "Rank stocks by 'potential': an AI predicting each stock's 3-month return vs SPY",
+     "Ranking IC -0.05 (2019-2022), +0.11 but t 1.6 (2023-2026); tilting the buy list to its top half: Sharpe "
+     "0.07 vs -0.12, then 2.00 vs 2.05", NOT_ADOPTED, "experiments/stock_potential.py"),
+    ("2026-10-06", "Diagnostic", "How much prices moved after each kind of crypto AI reading (potential growth "
+     "or decline)", "Next 1 day: readings of 55%+ were followed by +0.30% / +0.17% on average (2022-2024 / "
+     "2025-2026), 48% or less by -0.07% / -0.12%; next 4 hours: about no difference in 2025-2026", FINDING,
+     "cryptoai/outlook.py"),
+    ("2026-10-06", "Execution", "Buy with a limit order 1-3% below the price (wait 1-7 days, else market) instead "
+     "of at market", "Every plan paid more on average: crypto +0.00% to +0.34%, stocks +0.16% to +0.97%", NOT_ADOPTED,
+     "experiments/entry_price.py"),
     ("2026-10-06", "Diagnostic", "Which patterns the AI relies on (2025-2026, unseen)", "Mostly Bitcoin's "
      "short-term moves reversing; 15-minute patterns add ~nothing on new data", FINDING, "cryptoai/explain.py"),
 ], columns=["Date", "Area", "Idea", "Result (data not used for choosing)", "Verdict", "Details"])

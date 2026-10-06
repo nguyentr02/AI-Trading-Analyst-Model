@@ -8,7 +8,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from cryptoai import (advisor, altcoins, auth, backtest, config, data, droprisk, explain, live, market, metrics, model,
-                      notify, paper, portfolio, preview, research_log, signals, stockai, stockpaper, stocks,
+                      notify, outlook, paper, portfolio, preview, research_log, signals, stockai, stockpaper, stocks,
                       whales)
 
 ASSETS = config.ROOT / "assets"
@@ -252,11 +252,19 @@ COLUMN_HELP = {
     "Chance Sharpe > 0": "Probabilistic Sharpe ratio: the chance the strategy's true Sharpe is above zero.",
     "Chance beats hold": "The chance the strategy's true Sharpe is above buy & hold's.",
     "Fee per trade": "The exchange fee assumed per buy or sell (Binance's is 0.1%).",
+    # buy for hold
+    "Do now": "BUY: in the tested buy-for-hold list (above its 200-day average). AVOID for now: below it.",
+    "Price now": "Live Binance price (stock perpetual futures).",
+    "Invest": "Your budget split equally across the stocks marked BUY.",
+    "Shares": "Shares that amount buys at the price now (fractional).",
+    "Each weekly step": "Buy a quarter of it each week for 4 weeks, instead of all at once.",
+    "Sell if below (200-day avg)": "A floor, not a target: its 200-day average price. Sell only if the stock is below this at a monthly check. It rises as the stock rises.",
+    "Room above the sell-if-below line": "How far the price is above its floor now. Negative: below it (not a buy).",
 }
 COLUMN_HELP_PREFIX = {"Time (": "Date and time of the event, in the time zone chosen at the top.",
                       "When (": "When the signal changed, in the time zone chosen at the top.",
                       "Trained (": "When the model was retrained, in the time zone chosen at the top.",
-                      "AI next": "The AI's call (bullish, bearish or neutral) for this coin over that window."}
+                      "AI next": "The AI's view for this coin over that window: potential growth, potential decline or no clear direction."}
 
 
 def _help_for(col):
@@ -538,7 +546,9 @@ SIGNAL_STYLE = {  # badge color and icon for each signal
     "BEARISH": ("red", ":material/trending_down:"),
     "NEUTRAL": ("gray", ":material/trending_flat:"),
 }
-SIGNAL_ARROW = {"BULLISH": "▲ Bullish", "BEARISH": "▼ Bearish", "NEUTRAL": "● Neutral"}
+SIGNAL_ARROW = {"BULLISH": "▲ Potential growth", "BEARISH": "▼ Potential decline", "NEUTRAL": "● No clear direction"}
+SIGNAL_TEXT = {"BULLISH": "Potential growth", "BEARISH": "Potential decline", "NEUTRAL": "No clear direction"}
+WINDOW_TEXT = {"4h_next": "the next 4 hours", "4h": "the next day", "1d": "the next 3 days"}
 
 
 def page_signals():
@@ -567,13 +577,22 @@ def service_badge():
         st.badge(f"Live learning: {s['state']}", icon=":material/sync:", color="orange")
 
 
-def signal_row(spec, sig, live_now=None):
-    """One prediction inside a coin card: confirmed signal and its bar, plus the live provisional reading."""
+def signal_row(name, sig, live_now=None, look=None):
+    """One prediction inside a coin card: potential growth or decline, how much (from what really happened after
+    similar readings), and the live provisional reading."""
+    spec = config.MODELS[name]
     color, icon = SIGNAL_STYLE[sig.signal]
     line = st.container(horizontal=True, vertical_alignment="center", gap="small")
     line.markdown(spec["label"], width="content")
-    line.badge(sig.signal.title(), icon=icon, color=color)
-    st.progress(float(sig.prob_up), text=f"P(up) {sig.prob_up:.0%}")
+    line.badge(SIGNAL_TEXT[sig.signal], icon=icon, color=color)
+    st.progress(float(sig.prob_up), text=f"Chance of a rise {sig.prob_up:.0%}")
+    b = outlook.describe(name, float(sig.prob_up), look)
+    if b:
+        st.caption(f"How much: after readings like this (2022-2026, data the AI never trained on) the price moved "
+                   f"**{b['mean']:+.2%}** on average over {WINDOW_TEXT[name]}, typically {b['p25']:+.1%} to "
+                   f"{b['p75']:+.1%}, and rose {b['up_share']:.0%} of the time.",
+                   help="A buy and a later sell cost about 0.2% in fees, so moves smaller than that don't pay. "
+                        "'Typically' is the middle half of outcomes; a quarter were worse and a quarter better.")
     if live_now:
         arrow = {"BULLISH": ":green[▲]", "BEARISH": ":red[▼]"}.get(live_now["signal"], ":gray[●]")
         st.caption(f"Live now {arrow} {live_now['prob_up']:.1%} · {live_now['candle_progress']:.0%} into the "
@@ -607,6 +626,7 @@ def signal_board():
     if live_preview and preview.age_seconds(live_preview) > 5 * 60:
         live_preview = None  # the service has stopped updating it; don't show stale "live" numbers
     drops = (droprisk.load() or {}).get("coins", {})
+    look = outlook.load()
 
     cards = st.columns(len(config.SYMBOLS), gap="medium")
     for card, sym in zip(cards, config.SYMBOLS):
@@ -617,14 +637,24 @@ def signal_board():
             st.caption(f"Last close ${close:,.2f}")
             for n in names:
                 now = (live_preview or {}).get("models", {}).get(n, {}).get(sym)
-                signal_row(config.MODELS[n], sigs[n].loc[sym], now)
+                signal_row(n, sigs[n].loc[sym], now, look)
             if sym in drops:
                 drop_row(drops[sym])
 
     with st.container(border=True):
         st.markdown("**How to read these**")
-        st.caption(f"P(up) is the chance the price is higher at the end of each window. Bullish at "
-                   f"{config.ENTER_PROB:.0%} or more, bearish at {config.EXIT_PROB:.0%} or less.")
+        st.caption(f"Each prediction says whether the coin has **potential growth** (chance of a rise "
+                   f"{config.ENTER_PROB:.0%} or more), **potential decline** ({config.EXIT_PROB:.0%} or less), or no "
+                   "clear direction, over its window. **How much** comes from what really happened after similar "
+                   "readings on data the AI never trained on: the average move and its typical range. The moves "
+                   "are small (tenths of a percent), so a single signal is a tilt in the odds, not a forecast; "
+                   "a buy and a sell together cost about 0.2% in fees.")
+        if look:
+            weak = [config.MODELS[n]["label"] for n, m in look["models"].items()
+                    if m["check"]["2025-2026"]["high_mean"] - m["check"]["2025-2026"]["low_mean"] < 0.001]
+            if weak:
+                st.caption(f"**{', '.join(weak)}:** growth and decline readings have been followed by almost the "
+                           "same moves in 2025-2026 (less than 0.1% apart), so treat them as timing hints only.")
         for n in names:
             st.caption(f"**{config.MODELS[n]['label']}:** " + TRUST.get(n, "The main signal for direction.").strip())
         if drops:
@@ -834,10 +864,11 @@ def ai_outlook(sym):
         with st.container(border=True):
             top = st.container(horizontal=True, vertical_alignment="center")
             top.markdown(f"**{spec['label']}**")
-            top.badge(sig.signal.title(), icon=icon, color=color)
+            top.badge(SIGNAL_TEXT[sig.signal], icon=icon, color=color)
             st.progress(float(sig.prob_up), text=f"P(up) {sig.prob_up:.0%}")
             st.caption(TRUST.get(name, "The main signal.").strip())
-    st.caption(f"Bullish at {config.ENTER_PROB:.0%}+, bearish at {config.EXIT_PROB:.0%} or less. "
+    st.caption(f"Potential growth at a {config.ENTER_PROB:.0%}+ chance of a rise, potential decline at "
+               f"{config.EXIT_PROB:.0%} or less. "
                "Estimates with a small edge, not advice.")
 
 
@@ -1141,7 +1172,7 @@ def portfolio_overview(holdings):
         sigs = {n: get_signals(n, model_version(n)).set_index("symbol")["signal"] for n in names}
         if "4h" in sigs:
             bearish = int((pv["symbol"].map(sigs["4h"]) == "BEARISH").sum())
-            stats.metric("Flagged bearish (next 1 day)", bearish, width="content")
+            stats.metric("Potential decline (next 1 day)", bearish, width="content")
     with right:
         fig = go.Figure(go.Pie(labels=pv["symbol"].map(coin), values=pv["value"], hole=0.62, sort=False,
                                marker=dict(colors=[COIN_COLORS.get(s, GREY) for s in pv["symbol"]]),
@@ -1786,20 +1817,66 @@ def stock_buy_list(a):
         live = {}
     b = stocks.buy_list(a, live)
     n = int(b["in"].sum())
-    st.caption(f"Tested rule: hold an equal share of every stock above its 200-day average, and review once a month "
-               f"(next review {when(stocks.next_review().tz_convert('UTC'))}). It beat holding all {len(b)} stocks "
-               "equally in both test periods (Sharpe 0.83 vs 0.61 on 2016-2022, 2.05 vs 1.91 on 2023-2026) with a "
-               "smaller worst fall (-46% vs -59%). Buy in steps; this is a rule tested on past data, not a guarantee.")
-    cards = st.container(horizontal=True, gap="small")
-    for r in b[b["in"]].itertuples():
-        cards.metric(f"{r.ticker}", f"{r.weight:.1%}", f"{r.from_200d:+.0%} vs 200-day", border=True,
-                     delta_color="off", width=150, help=f"{r.name}: ${r.price:,.2f}; worst fall in 10 years "
-                     f"{r.worst_10y:.0%}. Equal share of the {n} stocks in the list.")
-    out = b[~b["in"]]
-    if len(out):
-        st.caption("Not in the list now (below their 200-day average): " + ", ".join(
-            f"{r.ticker} ({r.from_200d:+.0%})" for r in out.itertuples()) + ". If you hold one, the rule sells it at "
-            "the monthly review if it is still below.")
+    review = stocks.next_review().tz_convert("UTC")
+    _, saved_cash = stocks.load_portfolio()
+    budget = st.number_input("How much do you want to invest? (USD)", min_value=0.0, step=100.0,
+                             value=float(saved_cash) if saved_cash >= 100 else 1000.0, key="buy_budget")
+    each = budget / n if n else 0.0
+    st.markdown(f"**What to buy:** the {n} stocks marked **BUY** in the table below, the same amount of each "
+                f"(${each:,.0f} per stock in total).")
+    st.caption("Why the same amount of each: no way of ranking which stocks have more potential has passed testing "
+               "(past-year momentum, risk-adjusted momentum, low volatility, the 5-day AI, and an AI predicting each "
+               "stock's 3-month return all failed to beat equal shares; see Research → Strategy lab).")
+    st.markdown(f"**When to buy:** in 4 equal buys, one a week. On each buy day, buy ${each / 4:,.0f} of every stock "
+                "marked BUY that day.")
+    st.markdown("**At what price:** the market price at the moment you buy (the *Price now* column). Don't set a "
+                "lower target: in testing, waiting with an order 1-3% below the price cost **0.2% to 1% more on "
+                "average** than buying at market, because when the dip doesn't come the price runs away. Spreading the "
+                "buys over 4 weeks already evens out the price you pay.")
+    today = pd.Timestamp.now(tz="UTC")
+    plan = pd.DataFrame({
+        "Buy": [f"Buy {i + 1} of 4" for i in range(4)],
+        "Day": [("Today, " if i == 0 else "") + f"{local(today + pd.Timedelta(days=7 * i)):%a %b %d}" for i in range(4)],
+        "Each BUY stock": [each / 4] * 4, "Total that day": [budget / 4] * 4,
+    })
+    table(plan.style.format({"Each BUY stock": "${:,.0f}", "Total that day": "${:,.0f}"}), hide_index=True,
+          width="content", alt="Buy calendar: four weekly buys",
+          column_config={"Buy": st.column_config.Column(help="Which of the 4 buys."),
+                         "Day": st.column_config.Column(help="The day to make this buy (in the time zone chosen at "
+                                                             "the top). Any time that day is fine."),
+                         "Each BUY stock": st.column_config.Column(help="Dollars to buy of each stock marked BUY on "
+                                                                        "that day."),
+                         "Total that day": st.column_config.Column(help="All of that day's buys together.")})
+    st.caption("On each buy day, look at this table again: if a stock has switched to AVOID, skip it and split its "
+               "amount over the others.")
+    with st.container(border=True):
+        st.markdown(f"**Hold until:** there is no fixed end date. Check once a month at the US close (next: "
+                    f"**{when(review)}**). Keep a stock while its price is above its **sell-if-below line** (its 200-day average, a floor "
+                    "that rises with the stock; there is no take-profit target). If it is below the line at a monthly check, sell it, and buy whatever newly shows "
+                    "BUY. Between checks, do nothing, even if it dips.")
+    rows = []
+    for _, r in b.iterrows():
+        buy = bool(r["in"])
+        rows.append({"Stock": f"{r['ticker']} · {r['name']}", "Do now": "BUY" if buy else "AVOID for now",
+                     "Price now": r["price"], "Invest": each if buy else 0.0,
+                     "Shares": each / r["price"] if buy else 0.0, "Each weekly step": each / 4 if buy else 0.0,
+                     "Sell if below (200-day avg)": r["avg200"], "Room above the sell-if-below line": r["from_200d"],
+                     "Worst fall (10y)": r["worst_10y"]})
+    df = pd.DataFrame(rows)
+    table(df.style.format({"Price now": "${:,.2f}", "Invest": "${:,.0f}", "Shares": "{:.3f}",
+                           "Each weekly step": "${:,.0f}", "Sell if below (200-day avg)": "${:,.2f}",
+                           "Room above the sell-if-below line": "{:+.1%}", "Worst fall (10y)": "{:.0%}"})
+          .map(lambda x: f"color: {UP}; font-weight: 600" if x == "BUY" else
+               f"color: {GREY}" if x == "AVOID for now" else "", subset=["Do now"])
+          .map(lambda x: f"color: {UP}" if isinstance(x, float) and x > 0 else
+               f"color: {DOWN}" if isinstance(x, float) and x < 0 else "", subset=["Room above the sell-if-below line"]),
+          hide_index=True, width="stretch", alt="Which stocks to buy now, how much, and their sell lines")
+    st.caption(f"Live Binance prices, refreshed every minute. Shares are fractional (Binance stock tokens and futures "
+               f"allow that). Why this rule: holding an equal share of every stock above its 200-day average, checked "
+               f"monthly, beat holding all {len(b)} stocks in both test periods (Sharpe 0.83 vs 0.61 on 2016-2022, "
+               f"2.05 vs 1.91 on 2023-2026) with a smaller worst fall (-46% vs -59%). A stock far above its sell line "
+               "has more room before a sell but has already run up; 'Worst fall' shows how much each has dropped "
+               "before. Tested on past data, not a guarantee.")
 
 
 @st.fragment(run_every=60)

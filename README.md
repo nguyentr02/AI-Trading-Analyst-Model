@@ -128,7 +128,7 @@ offline again, run the setup command from step 2 without `-Online`.
 | Page | What you see |
 |---|---|
 | **Market** | Live prices updating every second, 24h change, high/low, volume, market cap, supply, all-time high, and whale activity (big trades, liquidations, open interest) |
-| **Signals** | The AI's current call and drop risk for each coin, and a log of recent signal changes. The badge at the top shows whether the live learning service is running |
+| **Signals** | For each coin and window: **potential growth**, **potential decline** or no clear direction, and **how much** (the average move and typical range that really followed similar readings in 2022-2026), plus drop risk and a log of recent changes. The badge at the top shows whether the live learning service is running. Recompute the "how much" numbers with `python -m cryptoai outlook` |
 | **Chart** | Candlestick chart with the model's P(up) underneath |
 | **Backtest** | How the strategy would have done on data the model had not seen, model accuracy, **Learning history**, and a **Retrain models** button |
 | **Portfolio** | AI advice (buy / sell / hold, with amounts) for your holdings and spare cash, plus value, profit/loss and allocation |

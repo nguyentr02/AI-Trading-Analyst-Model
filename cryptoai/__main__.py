@@ -18,6 +18,7 @@ def main():
     sub.add_parser("advice", help="buy / sell / hold advice for your saved portfolio")
     sub.add_parser("explain", help="what patterns the AI has learnt, and whether they held on unseen data")
     sub.add_parser("stock-ai", help="retrain and test the US stock AI, and save its signals")
+    sub.add_parser("outlook", help="recompute how much prices moved after each kind of crypto AI reading")
     login = sub.add_parser("set-login", help="set the username and password for opening the dashboard online")
     login.add_argument("--username", help="asked for if left out")
     sub.add_parser("tunnel", help="put the dashboard online via a Cloudflare tunnel and send you the link")
@@ -39,6 +40,14 @@ def main():
             print(f"Training {name} ({spec['label']}) ...")
             for k, v in model.train(name).items():
                 print(f"  {k}: {v}")
+
+    elif args.cmd == "outlook":
+        from . import outlook
+        for n, m in outlook.compute()["models"].items():
+            c = m["check"]
+            print(f"{m['label']}: 55%+ readings {c['2022-2024']['high_mean']:+.2%} / {c['2025-2026']['high_mean']:+.2%}, "
+                  f"48%- readings {c['2022-2024']['low_mean']:+.2%} / {c['2025-2026']['low_mean']:+.2%} "
+                  f"(2022-2024 / 2025-2026) -> {'reliable' if m['reliable'] else 'not reliable'}")
 
     elif args.cmd == "stock-ai":
         from . import stockai
