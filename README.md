@@ -163,12 +163,21 @@ A sensible way to combine them: take the **next 1 day** signal as the direction,
 choose a better moment to enter or exit. Treat every signal as one input among several, and never risk money
 you can't afford to lose.
 
+**Drop risk, 3 days** (bottom of each coin card) is a separate warning: the chance that, within the next 3 days,
+the price first falls about twice the coin's normal daily move before rising as much. On average about 1 in 5
+candles is followed by such a drop, so 20–30% is normal. It is **Elevated** from 35% and **High** from 40%.
+Its accuracy (AUC 0.57) is better than the direction predictions'. In testing, selling when it was High and
+not buying while it was Elevated cut the worst fall of the Smart strategy from −40% to −32% on 2025–2026. Single
+warnings are often wrong (about half the time the price was higher 3 days later); it helps by avoiding the
+worst falls, not by timing every top. It retrains at every 4h close. See `experiments/exit_timing.py`.
+
 ### How it learns
 
 The live service stays connected to Binance. Each time a candle closes it:
 
 1. downloads the final data,
-2. retrains the models for that timeframe on everything since 2019 up to that candle,
+2. retrains the models for that timeframe on everything since 2019 up to that candle (at 4h closes, the drop
+   warning too),
 3. tests the new model on months it didn't train on, and keeps it only if it still beats a coin flip
    (otherwise it keeps the previous model),
 4. logs the new signals.

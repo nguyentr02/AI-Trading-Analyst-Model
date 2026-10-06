@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from cryptoai import (advisor, auth, backtest, config, data, live, market, metrics, model, notify, paper, portfolio,
-                      preview, signals)
+from cryptoai import (advisor, auth, backtest, config, data, droprisk, live, market, metrics, model, notify, paper,
+                      portfolio, preview, signals)
 
 ASSETS = config.ROOT / "assets"
 st.set_page_config(page_title="Crypto AI", page_icon=str(ASSETS / "icon.svg"), layout="wide")
@@ -374,6 +374,19 @@ def signal_row(spec, sig, live_now=None):
                    "heading; the confirmed signal above updates when the candle closes.")
 
 
+DROP_STYLE = {"Normal": ("gray", ":material/check_circle:"), "Elevated": ("orange", ":material/warning:"),
+              "High": ("red", ":material/trending_down:")}
+
+
+def drop_row(reading):
+    """The drop warning inside a coin card: chance a sharp fall comes before a rise in the next 3 days."""
+    color, icon = DROP_STYLE[reading["level"]]
+    line = st.container(horizontal=True, vertical_alignment="center", gap="small")
+    line.markdown("Drop risk, 3 days", width="content")
+    line.badge(reading["level"], icon=icon, color=color)
+    st.progress(min(float(reading["p_drop"]), 1.0), text=f"P(sharp drop first) {reading['p_drop']:.0%}")
+
+
 @st.fragment(run_every=60)
 def signal_board():
     """Every coin's three predictions at once. Re-checks every minute so new signals appear by themselves."""
@@ -385,6 +398,7 @@ def signal_board():
     live_preview = preview.load()
     if live_preview and preview.age_seconds(live_preview) > 5 * 60:
         live_preview = None  # the service has stopped updating it; don't show stale "live" numbers
+    drops = (droprisk.load() or {}).get("coins", {})
 
     cards = st.columns(len(config.SYMBOLS), gap="medium")
     for card, sym in zip(cards, config.SYMBOLS):
@@ -396,6 +410,8 @@ def signal_board():
             for n in names:
                 now = (live_preview or {}).get("models", {}).get(n, {}).get(sym)
                 signal_row(config.MODELS[n], sigs[n].loc[sym], now)
+            if sym in drops:
+                drop_row(drops[sym])
 
     with st.container(border=True):
         st.markdown("**How to read these**")
@@ -403,6 +419,12 @@ def signal_board():
                    f"{config.ENTER_PROB:.0%} or more, bearish at {config.EXIT_PROB:.0%} or less.")
         for n in names:
             st.caption(f"**{config.MODELS[n]['label']}:** " + TRUST.get(n, "The main signal for direction.").strip())
+        if drops:
+            st.caption(f"**Drop risk:** the chance that, within 3 days, the price first falls about 2× the coin's "
+                       f"normal daily move before rising as much (about 1 in 5 candles on average). Elevated from "
+                       f"{droprisk.CAUTION_AT:.0%}: in testing, not buying then helped. High from {droprisk.SELL_AT:.0%}: "
+                       "selling then cut the worst drop from -40% to -32% on 2025-2026. Single warnings are often "
+                       "wrong; it helps by avoiding the worst falls.")
         st.caption("**Live now** is provisional: the models re-run on the live price every minute, as if the "
                    "forming candle closed now. Alerts and advice use the confirmed signals.")
         st.caption("Estimates with a small edge, not advice. Size positions so being wrong is affordable.")

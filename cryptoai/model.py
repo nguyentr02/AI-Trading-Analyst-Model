@@ -67,14 +67,14 @@ def feature_cols(ds):
     return [c for c in ds.columns if c not in ("y", "fwd_ret_1", "symbol", *config.UNUSED_FEATURES)]
 
 
-def walk_forward(ds, name, n_folds=8):
+def walk_forward(ds, name, n_folds=8, gap=None):
     """Out-of-sample probabilities: each fold is predicted by a model trained only on earlier data."""
     cols = feature_cols(ds)
     labeled = ds.dropna(subset=["y"])
     times = labeled.index.unique().sort_values()
     start = len(times) // 3
     edges = np.linspace(start, len(times), n_folds + 1).astype(int)
-    gap = spec(name)["horizon"]  # embargo so training labels never overlap the test period
+    gap = gap or spec(name)["horizon"]  # embargo (in candles) so training labels never overlap the test period
 
     out = []
     for a, b in zip(edges[:-1], edges[1:]):

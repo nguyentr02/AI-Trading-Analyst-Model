@@ -21,7 +21,7 @@ import pandas as pd
 import requests
 from websockets.sync.client import connect
 
-from . import advisor, config, model, notify, paper, preview, signals
+from . import advisor, config, droprisk, model, notify, paper, preview, signals
 
 STREAM_URL = "wss://stream.binance.com:9443/stream?streams="
 WAIT_FOR_ALL = 20  # seconds to wait for every symbol's close message before processing anyway
@@ -52,9 +52,28 @@ class LiveService:
         """Fetch new data, retrain, and log the signals for every model built on timeframe `tf`."""
         for name in [n for n, s in config.MODELS.items() if s["timeframe"] == tf]:
             self._learn_model(name, reason)
+        if tf == "4h":
+            self.learn_drop_risk(reason)
         if tf == advisor_timeframe():
             self.advise()
         self.paper_trade(tf)
+
+    def learn_drop_risk(self, reason):
+        """Retrain the drop warning (droprisk.py) on the 4h data just updated, and log each coin's reading."""
+        t0 = time.time()
+        try:
+            m = droprisk.train(refresh=False)
+        except NETWORK_ERRORS:
+            raise
+        except Exception:
+            log(f"drop warning failed:\n{traceback.format_exc()}")
+            return
+        verdict = "updated" if m["accepted"] else f"REJECTED (AUC < {config.MIN_AUC}), kept previous model"
+        log(f"drop warning {reason}: AUC {m['oos_auc']}, model {verdict} [{time.time() - t0:.0f}s]")
+        for sym, r in (droprisk.load() or {}).get("coins", {}).items():
+            log(f"    {sym:<9} P(sharp drop first, 3 days) {r['p_drop']:.0%}  {r['level']}")
+        self.status["last_learn_drop"] = _now()
+        self._save_status()
 
     def paper_trade(self, tf):
         """Let the paper account act on the fresh signals: the AI at 4h closes, the trend benchmark daily."""

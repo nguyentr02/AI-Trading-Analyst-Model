@@ -138,6 +138,8 @@ def _smart_inputs(probs, symbol, start, end):
     p = p.drop(columns="known_at").dropna()
     if "meta" in probs:  # optional filter model's P(this buy pays off), see the meta-labelling experiment
         p["meta"] = _for(probs["meta"], symbol, start, end).reindex(p.index)
+    if "drop" in probs:  # optional P(sharp drop comes before a rise), see experiments/exit_timing.py
+        p["pdrop"] = _for(probs["drop"], symbol, start, end).reindex(p.index)
     return p
 
 
@@ -148,7 +150,8 @@ def _smart_trade(p, candles, cash, fee, rules=SMART):
     """
     step = pd.Timedelta("4h")
     start_cash, coins, cost, fees = cash, 0.0, 0.0, 0.0  # cost = total paid for the coins held (incl. fees)
-    protected = tp_done = half_sold = wait_reset = False
+    protected = tp_done = half_sold = wait_reset = drop_half = trail_done = False
+    peak = 0.0  # highest close since the position was opened (for the optional trailing exit)
     pending = None  # limit order: {"price", "left", "target"}
     actions, equity, exposure, stops = [], {p.index[0] + step: cash}, [], 0
 
@@ -156,13 +159,14 @@ def _smart_trade(p, candles, cash, fee, rules=SMART):
         return cash + coins * px
 
     def buy(when, px, target, what, reason):
-        nonlocal cash, coins, cost, fees, protected, tp_done
+        nonlocal cash, coins, cost, fees, protected, tp_done, peak
         spend = min((target - coins * px / value(px)) * value(px), cash)
         if spend < config.MIN_TRADE_USDT:
             return
         fees += spend * fee
         if coins == 0:
             protected = tp_done = False
+        peak = max(peak, px)
         coins += spend * (1 - fee) / px
         cost += spend
         cash -= spend
@@ -214,6 +218,26 @@ def _smart_trade(p, candles, cash, fee, rules=SMART):
             sell(when, px, 0.5, "SELL half (profit)", f"up {px / (cost / coins) - 1:+.0%}, confidence faded")
             tp_done = True
 
+        # 3b. Optional exits (off unless set in `rules`; see experiments/exit_timing.py):
+        # a learned drop warning, and a trailing exit once the position is in profit.
+        if coins > 0:
+            peak = max(peak, px)
+        pdrop = row.get("pdrop", float("nan"))
+        if coins > 0 and rules.get("drop_sell_all") is not None and pdrop >= rules["drop_sell_all"]:
+            sell(when, px, 1.0, "SELL all (drop warning)", f"sharp drop likely ({pdrop:.0%})")
+            pending = None
+        elif coins > 0 and not drop_half and rules.get("drop_sell_half") is not None and pdrop >= rules["drop_sell_half"]:
+            sell(when, px, 0.5, "SELL half (drop warning)", f"sharp drop likely ({pdrop:.0%})")
+            drop_half = True
+        trail = rules.get("trail")
+        if coins > 0 and trail and not trail_done and peak >= cost / coins * (1 + trail["after"]) \
+                and px <= peak * (1 - trail["pct"]):
+            sell(when, px, trail["share"], "SELL (trailing)", f"{px / peak - 1:+.0%} from the peak after a gain")
+            trail_done = True
+        if coins == 0:
+            drop_half = trail_done = False
+            peak = 0.0
+
         # 4. Sell signal: all of it, or half if the 3-day view still expects more to come.
         if coins > 0 and p1 <= rules["sell_below"]:
             if p3 >= rules["keep_half_if_3day"]:
@@ -229,6 +253,8 @@ def _smart_trade(p, candles, cash, fee, rules=SMART):
         meta_min = rules.get("meta_min")
         if target is not None and meta_min is not None and not row.get("meta", 1.0) >= meta_min:
             target = None  # the filter model expects this buy to lose: skip it
+        if target is not None and rules.get("drop_block_buy") is not None and pdrop >= rules["drop_block_buy"]:
+            target = None  # a sharp drop is likely: don't buy into it
         if target is not None and not wait_reset:
             gap = target - coins * px / value(px)
             if gap >= rules["min_change"]:
