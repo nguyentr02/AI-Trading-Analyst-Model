@@ -136,10 +136,12 @@ offline again, run the setup command from step 2 without `-Online`.
 | **Altcoins → Altcoin market** | Experimental: trend status, AI P(up) and drop risk for NEAR, ZEC, XRP, DOGE, AVAX and LINK, and the most volatile liquid altcoins on Binance |
 | **Altcoins → Altcoin paper trading** | A separate 4-week trial of the same five accounts on those six altcoins |
 | **Altcoins → What the AI learnt** | What testing found about altcoins |
+| **US stocks → Stock market** | 17 US stocks and ETFs listed on Binance (Nvidia, Apple, Microsoft, Uber, SPY, QQQ, ...): live Binance prices and charts, trend and risk, and whether trading them with trend rules beat simply holding (tested on 10 years of Yahoo history) |
 | **Research → Patterns the AI learnt** | Which kinds of patterns the AI relies on (trend, momentum, Bitcoin's moves, ...), and what each one shows: how often the AI expected a rise vs how often the price really rose, on data it never trained on. Refreshed daily |
 | **Research → Strategy lab** | Every idea tested so far, with its result on data it wasn't chosen on, and whether it was adopted |
 
-The navbar has three menus: **Top coins** (the pages for BTC, ETH, BNB and SOL), **Altcoins** and **Research**.
+The navbar has four menus: **Top coins** (the pages for BTC, ETH, BNB and SOL), **Altcoins**, **US stocks** and
+**Research**.
 The switch at the top right shows every time in **UTC** or **Vietnam time (UTC+7)**; the choice is kept in the
 page link, so bookmark it to always open in your time zone.
 

@@ -8,7 +8,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from cryptoai import (advisor, altcoins, auth, backtest, config, data, droprisk, explain, live, market, metrics, model,
-                      notify, paper, portfolio, preview, research_log, signals, whales)
+                      notify, paper, portfolio, preview, research_log, signals, stocks, whales)
 
 ASSETS = config.ROOT / "assets"
 st.set_page_config(page_title="Crypto AI", page_icon=str(ASSETS / "icon.svg"), layout="wide")
@@ -208,7 +208,10 @@ st.session_state.setdefault("chart_ind", ["MA", "Volume", "AI signal"])
 st.session_state.setdefault("sym", config.SYMBOLS[0])
 st.session_state.setdefault("alt_chart_interval", "4h")
 st.session_state.setdefault("alt_chart_ind", ["MA", "Volume"])
-for k in ("model", "sym", "chart_interval", "chart_ind", "alt_chart_interval", "alt_chart_ind"):
+st.session_state.setdefault("stock_chart_interval", "1D")
+st.session_state.setdefault("stock_chart_ind", ["MA", "Volume"])
+for k in ("model", "sym", "chart_interval", "chart_ind", "alt_chart_interval", "alt_chart_ind", "stock_chart_interval",
+          "stock_chart_ind"):
     st.session_state[k] = st.session_state[k]
 
 # Time zone for every time shown (data and logs stay in UTC; only the display changes).
@@ -1472,6 +1475,123 @@ def page_patterns():
                          alt=f"Expected vs real rises by {p['label']}")
 
 
+# ---------------- US stocks ----------------
+@st.cache_data(ttl=6 * 3600, show_spinner="Loading 10 years of stock history (first time about 10 seconds)…")
+def get_stock_analysis():
+    return stocks.analyse_all()
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def get_momentum_test():
+    return stocks.momentum_test()
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def get_stock_prices():
+    return stocks.live_prices()
+
+
+def _pick_stock():
+    rows = st.session_state["stock_table"].selection.rows
+    if rows:
+        st.session_state["stock_pick"] = st.session_state["_stock_order"][rows[0]]
+
+
+def page_stocks():
+    st.title("US stocks")
+    st.caption("Live prices and charts from Binance's stock perpetual futures (24/7, the most traded way to hold US "
+               "stocks on Binance; tokenized spot pairs like NVDAB/USDT also exist). Binance's stock history is only "
+               "months long, so the hold-vs-trade tests below use 10 years of daily closes from Yahoo Finance.")
+    try:
+        a = get_stock_analysis()
+    except Exception as e:
+        st.error(f"Could not load stock history: {e}")
+        return
+    a = a[a.get("error").isna()] if "error" in a else a
+    try:
+        live = get_stock_prices()
+    except Exception:
+        live = {}
+
+    pick = st.selectbox("Stock chart", list(a["ticker"]), index=None, key="stock_pick",
+                        format_func=lambda t: f"{t} · {stocks.STOCKS[t]}", placeholder="Select a stock to see its chart")
+    if pick:
+        stock_detail(a.set_index("ticker").loc[pick], live.get(pick))
+
+    st.subheader("Hold or trade?")
+    beats = int(a["rule_beats_hold"].sum())
+    st.markdown(f"**Trading with trend rules beat simply holding on {beats} of {len(a)} stocks** in 2023-2026 (rule "
+                "chosen per stock on 2016-2022: buy above its 50, 100 or 200-day average, sell below). On stocks, "
+                "unlike crypto, holding has been better.")
+    table = pd.DataFrame({
+        "Stock": a["ticker"] + " · " + a["name"],
+        "Price (Binance)": [live.get(t, (np.nan,))[0] for t in a["ticker"]],
+        "24h": [live.get(t, (np.nan, np.nan))[1] for t in a["ticker"]],
+        "1 year": a["1y"], "From 1y high": a["from_high"],
+        "Trend": np.where(a["above_200d"], "▲ above 200-day", "▼ below 200-day"),
+        "Typical yearly swing": a["vol"], "Worst fall (10y)": a["worst_10y"],
+        "Hold, Sharpe 2023-26": a["hold_check_sharpe"], "Best rule, Sharpe 2023-26":
+            [r[f"{r['rule']}_check_sharpe"] if r["rule"] else np.nan for _, r in a.iterrows()],
+    })
+    st.session_state["_stock_order"] = list(a["ticker"])
+    pct = ["24h", "1 year", "From 1y high", "Worst fall (10y)"]
+    st.dataframe(
+        table.style.format({**{c: "{:+.1%}" for c in pct}, "Typical yearly swing": "{:.0%}", "Price (Binance)": "${:,.2f}",
+                            "Hold, Sharpe 2023-26": "{:.2f}", "Best rule, Sharpe 2023-26": "{:.2f}"}, na_rep="–")
+        .map(lambda x: f"color: {UP}" if isinstance(x, float) and x > 0 else
+             f"color: {DOWN}" if isinstance(x, float) and x < 0 else "", subset=["24h", "1 year"])
+        .map(lambda x: f"color: {UP}" if str(x).startswith("▲") else f"color: {DOWN}", subset=["Trend"]),
+        hide_index=True, width="stretch", alt="US stocks on Binance: price, trend, risk, hold vs trade",
+        on_select=_pick_stock, selection_mode="single-row", key="stock_table")
+    st.caption("Click a row to open its chart. Sharpe: return per unit of risk. These are today's well-known stocks "
+               "(survivorship bias), so their past returns look better than a stock picked in advance would have; "
+               "hold vs trade on the same stock is the fair comparison.")
+
+    m = get_momentum_test()
+    with st.container(border=True):
+        st.markdown("**Picking the strongest stocks each month (momentum)**")
+        st.caption(f"Holding the 5 stocks with the best past-year return (skipping the last month), rebalanced "
+                   f"monthly, vs holding all equally. Sharpe {m['momentum_choose_sharpe']:.2f} vs "
+                   f"{m['equal_choose_sharpe']:.2f} on 2016-2022 and {m['momentum_check_sharpe']:.2f} vs "
+                   f"{m['equal_check_sharpe']:.2f} on 2023-2026: more return lately but more risk, not better per "
+                   f"unit of risk. Strongest now: {', '.join(m['top_now'])}.")
+
+
+def stock_detail(row, live):
+    """Chart from Binance and the hold/trade view for one stock."""
+    sym = stocks.perp(row.name)
+    bar = st.container(horizontal=True, vertical_alignment="bottom", gap="medium")
+    interval = bar.segmented_control("Interval", list(CHART_INTERVALS), key="stock_chart_interval", required=True)
+    shown = bar.pills("Indicators", [i for i in INDICATORS if i != "AI signal"], key="stock_chart_ind",
+                      selection_mode="multi")
+    main, side = st.columns([3.3, 1], gap="medium")
+    with main:
+        head = st.container(horizontal=True, vertical_alignment="center", gap="large")
+        if live:
+            head.metric(f"{row.name} / USDT (Binance)", f"${live[0]:,.2f}", f"{live[1]:+.2%} 24h", width="content")
+            head.markdown(f":gray[24h volume]  \n**{usd(live[2])}**", width="content")
+        head.markdown(f":gray[Last US close]  \n**${row.close:,.2f}**", width="content")
+        price_chart(sym, interval, tuple(shown))
+    with side:
+        st.subheader("Hold view", icon=":material/savings:")
+        with st.container(border=True):
+            line = st.container(horizontal=True, vertical_alignment="center", gap="small")
+            line.markdown("Long-term trend", width="content")
+            line.badge("Up" if row.above_200d else "Down", color="green" if row.above_200d else "red",
+                       icon=":material/trending_up:" if row.above_200d else ":material/trending_down:")
+            st.caption(f"{row.from_200d:+.1%} vs its 200-day average · 1 year {row['1y']:+.0%} · "
+                       f"{row.from_high:+.0%} from its 1-year high")
+            st.caption(f"Typical yearly swing {row.vol:.0%}; worst fall in 10 years {row.worst_10y:.0%}. Hold only "
+                       "what you could keep through a fall like that.")
+        st.subheader("Trade test", icon=":material/swap_horiz:")
+        with st.container(border=True):
+            st.caption("Sharpe (return per unit of risk), 2023-2026, rule chosen on 2016-2022:")
+            st.markdown(f"Hold: **{row.hold_check_sharpe:.2f}** · {row.rule} rule: **{row[f'{row.rule}_check_sharpe']:.2f}**")
+            verdict = "Trading beat holding" if row.rule_beats_hold else "Holding beat trading"
+            st.badge(verdict, color="green" if row.rule_beats_hold else "gray")
+            st.caption(f"The {row.rule} rule would be {'in' if row.rule_in_now else 'out'} right now.")
+
+
 def page_strategy_lab():
     st.title("Strategy lab")
     st.caption("Every idea tested so far. Unlike a bot marketplace that ranks by the last few days' ROI, each idea "
@@ -1510,6 +1630,9 @@ pages = {
         st.Page(page_altcoins, title="Altcoin market", icon=":material/rocket_launch:", url_path="altcoins"),
         st.Page(page_paper_alts, title="Altcoin paper trading", icon=":material/science:", url_path="altcoins-paper"),
         st.Page(page_alt_learnt, title="What the AI learnt", icon=":material/school:", url_path="altcoins-learnt"),
+    ],
+    "US stocks": [
+        st.Page(page_stocks, title="Stock market", icon=":material/show_chart:", url_path="stocks"),
     ],
     "Research": [
         st.Page(page_patterns, title="Patterns the AI learnt", icon=":material/psychology:", url_path="patterns"),

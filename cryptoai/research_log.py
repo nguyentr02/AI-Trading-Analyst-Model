@@ -69,6 +69,11 @@ LOG = pd.DataFrame([
      "Tiny-profit guard: Sharpe 1.079 vs 1.085 (2022-2024), 0.450 vs 0.416 (2025-2026), about neutral. "
      "Never selling at a loss unless -5%/-10%: worst fall -44%/-48% vs -38% in 2022", NOT_ADOPTED,
      "experiments/fee_guard.py"),
+    ("2026-10-06", "US stocks", "Trade 17 Binance-listed US stocks with 50/100/200-day trend rules instead of "
+     "holding", "Best rule (chosen 2016-2022) beat holding on 0 of 17 stocks in 2023-2026", NOT_ADOPTED,
+     "cryptoai/stocks.py"),
+    ("2026-10-06", "US stocks", "Hold the 5 strongest stocks by 12-1 month momentum, monthly", "Sharpe 0.63 vs "
+     "0.81 (2016-2022), 1.44 vs 1.72 (2023-2026) for holding all equally", NOT_ADOPTED, "cryptoai/stocks.py"),
     ("2026-10-06", "Diagnostic", "Which patterns the AI relies on (2025-2026, unseen)", "Mostly Bitcoin's "
      "short-term moves reversing; 15-minute patterns add ~nothing on new data", FINDING, "cryptoai/explain.py"),
 ], columns=["Date", "Area", "Idea", "Result (data not used for choosing)", "Verdict", "Details"])
