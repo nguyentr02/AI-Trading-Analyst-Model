@@ -77,6 +77,12 @@ LOG = pd.DataFrame([
     ("2026-10-06", "US stocks", "Stock AI (P(up, 5 days), pooled over 17 stocks, SPY as market context) as a risk "
      "filter or position sizer", "AUC 0.478 (2019-2022), 0.529 (2023-now); risk filter Sharpe 0.51 vs 0.68 for "
      "holding in 2019-2022", NOT_ADOPTED, "cryptoai/stockai.py"),
+    ("2026-10-06", "US stocks", "Buy-for-hold list: equal weight across stocks above their 200-day average, "
+     "reviewed monthly", "Sharpe 0.83 vs 0.61 (2016-2022), 2.05 vs 1.91 (2023-2026) for holding all equally; "
+     "worst fall -46% vs -59%", ADOPTED, "experiments/stock_hold_picks.py"),
+    ("2026-10-06", "US stocks", "Sell everything in a market crash (S&P 500 below its 200-day average, or 10% "
+     "below its high)", "Cut the 2020/2022 worst fall (-46% vs -59%) but Sharpe 1.47 / 1.67 vs 1.91 in 2023-2026",
+     PARTLY, "experiments/stock_hold_picks.py"),
     ("2026-10-06", "Diagnostic", "Which patterns the AI relies on (2025-2026, unseen)", "Mostly Bitcoin's "
      "short-term moves reversing; 15-minute patterns add ~nothing on new data", FINDING, "cryptoai/explain.py"),
 ], columns=["Date", "Area", "Idea", "Result (data not used for choosing)", "Verdict", "Details"])

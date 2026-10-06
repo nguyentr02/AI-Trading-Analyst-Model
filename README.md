@@ -137,7 +137,7 @@ offline again, run the setup command from step 2 without `-Online`.
 | **Altcoins → Altcoin paper trading** | A separate 4-week trial of the same five accounts on those six altcoins |
 | **Altcoins → What the AI learnt** | What testing found about altcoins |
 | **US stocks → Stock market** | 17 US stocks and ETFs listed on Binance (Nvidia, Apple, Microsoft, Uber, SPY, QQQ, ...): live Binance prices and charts, trend and risk, and whether trading them with trend rules beat simply holding (tested on 10 years of Yahoo history) |
-| **US stocks → Stock signals** | Each stock's long- and short-term trend and the stock AI's chance of a rise over 5 trading days, with how far to trust it (weak: holding beat trading on it) |
+| **US stocks → Stock signals** | **Buy for hold now**: the tested list (an equal share of every stock above its 200-day average, reviewed monthly) on live prices; the **US market crash monitor**; and each stock's trend and the stock AI's 5-day chance of a rise |
 | **US stocks → Stock backtest** | Any stock: holding vs a 50/100/200-day trend rule over 10 years, and how trading on the stock AI did |
 | **US stocks → Stock portfolio** | Enter your stocks and spare cash for hold-first advice: flags one stock above 25% of your stock money, notes trend and worst historical fall, and plans cash in 4 weekly steps |
 | **US stocks → Stock paper trading** | A 4-week trial: hold all, all in QQQ, buy in 4 weekly steps, the 200-day rule and the AI risk filter, at Binance stock prices |
@@ -253,10 +253,20 @@ off, set `"whales": false` in `notify.json`. Every event is saved to `logs\whale
 
 ### US stocks
 
-Every day after the US market closes (22:00 UTC, 05:00 Vietnam time), the live service retrains the stock AI,
-runs the stock paper trial's daily step, and alerts you (Windows and Zalo) when a stock crosses its 200-day
-average or moves 8% or more in a day. Retrain by hand with `.venv\Scripts\python -m cryptoai stock-ai`. Your stocks
+At the moment the US market closes (16:00 New York time, Monday to Friday; 03:00 or 04:00 Vietnam time), the live
+service makes the stock paper trial's decisions and fills them at that moment's Binance price, alerts you (Windows
+and Zalo) when a stock crosses its 200-day average or moves 8% or more in a day, and then retrains the stock AI. Retrain by hand with `.venv\Scripts\python -m cryptoai stock-ai`. Your stocks
 are saved in `stock_portfolio.json` and the trial in `paper_stocks\`, both kept off GitHub.
+
+**Which stocks to hold, and when to sell.** The tested rule (experiments/stock_hold_picks.py): hold an equal share
+of every stock above its 200-day average and review once a month, at the month's last US close; a stock still below
+its 200-day average then is sold. It beat holding all the stocks equally in 2016-2022 and 2023-2026, with a smaller
+worst fall. The Stock signals page shows the list live, and Stock portfolio marks holdings "SELL at review".
+
+**Market crash alerts.** Every minute the service checks the S&P 500 (Binance SPY price) and alerts you when it
+falls 10% (correction) or 20% (bear market) below its 1-year high, crosses its 200-day average, or drops 4%+ in a
+day. These are warnings, not automatic sells: selling everything at those points cut the 2020/2022 falls but missed
+the 2023-2026 rebound.
 
 ### Paper trading (4-week trial)
 

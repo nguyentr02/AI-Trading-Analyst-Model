@@ -25,9 +25,19 @@ def _with_live(cache, live):
     return merged[~merged.index.duplicated(keep="last")].sort_index()
 
 
-def compute():
-    """Provisional P(up) for every model and coin, from the live price. Returns the dict that is saved."""
+ALT_PREVIEW = config.LOG_DIR / "alt_live_preview.json"
+
+
+def compute(extra=(), path=None):
+    """Provisional P(up) for every model and coin, from the live price. Returns the dict that is saved.
+
+    With `extra` (e.g. altcoins), the models run on the main coins plus those (the main coins give the market
+    context the models were trained with) and only the extra coins are reported, saved to `path`.
+    """
     now = pd.Timestamp.now(tz="UTC")
+    every = [*config.SYMBOLS, *extra]
+    report = list(extra) if extra else config.SYMBOLS
+    path = path or config.LIVE_PREVIEW
     fetched = {}
 
     def live(sym, tf, limit):
@@ -41,14 +51,14 @@ def compute():
             continue
         tf = spec["timeframe"]
         raw = {}
-        for sym in config.SYMBOLS:
+        for sym in every:
             cache = data.load_cached(sym, tf).iloc[-HISTORY:]
             raw[sym] = _with_live(cache, live(sym, tf, 5))  # last row = the forming candle
         bars = None
         if spec["intraday"]:
             since = min(df.index[0] for df in raw.values()) - pd.Timedelta("2D")
             bars = {}
-            for sym in config.SYMBOLS:
+            for sym in every:
                 bars[sym] = {}
                 for itf in config.INTRADAY_TIMEFRAMES:
                     cache = data.load_cached(sym, itf)
@@ -57,14 +67,15 @@ def compute():
         probs = model.predict_history(raw, name, bars=bars)
         step = pd.Timedelta(tf)
         out["models"][name] = {}
-        for sym, df in raw.items():
+        for sym in report:
+            df = raw[sym]
             opened = df.index[-1]
             prob = float(probs[sym].iloc[-1])
             out["models"][name][sym] = {
                 "prob_up": round(prob, 3), "signal": signals.label(prob), "price": float(df["close"].iloc[-1]),
                 "candle_open": opened.isoformat(), "candle_progress": round(min((now - opened) / step, 1.0), 3),
             }
-    with config.atomic(config.LIVE_PREVIEW) as tmp:
+    with config.atomic(path) as tmp:
         tmp.write_text(json.dumps(out, indent=2))
     return out
 

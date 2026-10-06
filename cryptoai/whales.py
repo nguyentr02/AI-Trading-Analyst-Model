@@ -104,7 +104,8 @@ class WhaleWatch:
         url = SPOT_WS + "/".join(f"{s.lower()}@aggTrade" for s in self.symbols)
 
         def body():
-            with connect(url, open_timeout=15, close_timeout=5, max_size=2**20) as ws:
+            with connect(url, open_timeout=15, close_timeout=5, max_size=2**20,
+                         ping_interval=None, max_queue=None) as ws:  # Binance pings us; see live.py
                 for msg in ws:
                     self._on_trade(json.loads(msg)["data"])
         self._run_forever("trade", body)
@@ -133,7 +134,8 @@ class WhaleWatch:
     # ---------- 2. liquidations ----------
     def _liquidation_loop(self):
         def body():
-            with connect(FUTURES_WS, open_timeout=15, close_timeout=5, max_size=2**20) as ws:
+            with connect(FUTURES_WS, open_timeout=15, close_timeout=5, max_size=2**20,
+                         ping_interval=None, max_queue=None) as ws:  # Binance pings us; see live.py
                 for msg in ws:
                     self._on_liquidation(json.loads(msg)["o"])
         self._run_forever("liquidation", body)

@@ -2,9 +2,12 @@
 
 There are two separate books, each with its own coins, folder and trial dates:
 - MAIN  the live coins (config.SYMBOLS), saved in paper/
-- ALTS  altcoins (altcoins.WATCH), saved in paper_alts/. Same accounts and rules, except that AI Smart decides only
-        at 4h closes (the minute-by-minute live preview covers the main coins only). Experimental: the AI was
-        trained on the main coins and tested only on NEAR and ZEC (experiments/altcoins_near_zec.py).
+- ALTS  altcoins (altcoins.WATCH), saved in paper_alts/. Same accounts and rules (AI Smart also acts on the live
+        readings every minute, from 2026-10-06). Experimental: the AI was trained on the main coins and tested only
+        on NEAR and ZEC (experiments/altcoins_near_zec.py).
+
+Every fill uses the Binance price at the moment of the trade. At a candle close the decision is made with the
+current models and filled straight away; the models retrain afterwards (live.py).
 
 All accounts in a book start with the same balance at the same moment, split into one sleeve per coin (e.g.
 $250 each of $1,000), so one coin's fall can't drain the others. Fills use the live Binance price with a 0.1% fee
@@ -76,7 +79,7 @@ class Book:
 
 
 MAIN = Book("main", "Top coins", config.ROOT / "paper", tuple(config.SYMBOLS), live=True)
-ALTS = Book("alts", "Altcoins", config.ROOT / "paper_alts", tuple(altcoins.WATCH), live=False)
+ALTS = Book("alts", "Altcoins", config.ROOT / "paper_alts", tuple(altcoins.WATCH), live=True)
 BOOKS = (MAIN, ALTS)
 DIR, ACCOUNT, TRADES, BALANCE = MAIN.dir, MAIN.account, MAIN.trades, MAIN.balance  # older names
 

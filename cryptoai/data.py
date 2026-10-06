@@ -69,11 +69,28 @@ def _since(df):
 
 
 def _merge_save(df, new, path):
+    old = df
     df = pd.concat([df, new]) if not df.empty else new
     df = df[~df.index.duplicated(keep="last")].sort_index()
     df.index = df.index.as_unit("ms")
-    with config.atomic(path) as tmp:
-        df.to_csv(tmp)
+    if (not old.empty and path.exists() and list(new.columns) == list(old.columns)
+            and new.index.min() >= old.index[-1]):
+        # Usual case: only the last cached row (re-fetched) and newer rows changed. Rewrite just the tail of the
+        # file instead of the whole history (whole rewrites of the 15m files took ~20 s per update).
+        tail = df[df.index >= old.index[-1]]
+        with open(path, "rb+") as f:
+            f.seek(0, 2)
+            end = f.tell()
+            f.seek(max(end - 4096, 0))
+            chunk = f.read()
+            cut = chunk.rstrip(b"\r\n").rfind(b"\n")  # start of the last data line
+            f.seek(max(end - 4096, 0) + cut + 1)
+            f.truncate()
+            f.write(tail.to_csv(header=False, lineterminator="\n").encode())
+    else:
+        with config.atomic(path) as tmp:
+            df.to_csv(tmp)
+    _loaded[path] = (path.stat().st_mtime_ns, df)  # keep the parsed copy current; no re-read needed
     return df
 
 
@@ -154,12 +171,17 @@ def drop_open_candle(df, timeframe):
     return df
 
 
-def closed(timeframe, refresh=True, symbols=config.SYMBOLS):
-    """Closed candles with funding and premium for every symbol, as {symbol: DataFrame}."""
+def closed(timeframe, refresh=True, symbols=config.SYMBOLS, refresh_derivatives=None):
+    """Closed candles with funding and premium for every symbol, as {symbol: DataFrame}.
+
+    `refresh_derivatives=False` downloads new candles but uses the cached funding and premium (unused by the
+    models, and slow to fetch), for quick decisions at a candle close.
+    """
+    refresh_derivatives = refresh if refresh_derivatives is None else refresh_derivatives
     out = {}
     for s in symbols:
         df = drop_open_candle(update(s, timeframe) if refresh else load_cached(s, timeframe), timeframe)
-        out[s] = with_derivatives(df, s, timeframe, refresh)
+        out[s] = with_derivatives(df, s, timeframe, refresh_derivatives)
     return out
 
 

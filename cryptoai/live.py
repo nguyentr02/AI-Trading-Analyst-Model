@@ -15,6 +15,7 @@ import socket
 import time
 import traceback
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import ccxt
 import pandas as pd
@@ -27,7 +28,7 @@ from . import (advisor, altcoins, config, droprisk, explain, model, notify, pape
 STREAM_URL = "wss://stream.binance.com:9443/stream?streams="
 WAIT_FOR_ALL = 20  # seconds to wait for every symbol's close message before processing anyway
 HEARTBEAT = 60  # seconds between status file updates, so the dashboard can tell the service is alive
-STOCK_HOUR = 22  # UTC hour, safely after the US close (20:00 UTC in summer, 21:00 in winter), for the stock jobs
+NEW_YORK = ZoneInfo("America/New_York")  # the US market closes at 16:00 here (summer and winter time handled)
 
 
 # Problems reaching Binance. (Not all OSErrors: a PermissionError on a locked file is a different problem.)
@@ -52,6 +53,7 @@ class LiveService:
     # ---------- learning ----------
     def learn(self, tf, reason):
         """Fetch new data, retrain, and log the signals for every model built on timeframe `tf`."""
+        self.trade_first(tf)
         for name in [n for n, s in config.MODELS.items() if s["timeframe"] == tf]:
             self._learn_model(name, reason)
         if tf == "4h":
@@ -64,6 +66,22 @@ class LiveService:
         if tf == advisor_timeframe():
             self.advise()
         self.paper_trade(tf)
+
+    def trade_first(self, tf):
+        """At a candle close, decide with the current models and fill at the live price straight away. Retraining
+        takes minutes and comes after, so no trade waits for it (the retrained models decide from the next close)."""
+        if not any(paper.is_open(b) for b in paper.BOOKS):
+            return
+        t0 = time.time()
+        try:
+            name = next(n for n, s in config.MODELS.items() if s["timeframe"] == tf)
+            signals.current(name, refresh=True, fast=True)  # downloads the candle that just closed
+        except NETWORK_ERRORS:
+            raise
+        except Exception:
+            log(f"trade-first signals failed:\n{traceback.format_exc()}")
+            return
+        self.paper_trade(tf, started=t0)
 
     def learn_drop_risk(self, reason):
         """Retrain the drop warning (droprisk.py) on the 4h data just updated, and log each coin's reading."""
@@ -82,8 +100,9 @@ class LiveService:
         self.status["last_learn_drop"] = _now()
         self._save_status()
 
-    def paper_trade(self, tf):
-        """Let each open paper book act on the fresh signals: the AI at 4h closes, the trend accounts daily."""
+    def paper_trade(self, tf, started=None):
+        """Let each open paper book act on the fresh signals: the AI at 4h closes, the trend accounts daily.
+        With `started`, log how many seconds after the candle close each book's decisions were filled."""
         for book in paper.BOOKS:
             if not paper.is_open(book):
                 continue
@@ -101,6 +120,9 @@ class LiveService:
             for r in done.itertuples() if len(done) else []:
                 log(f"    {tag} {r.account.upper()}: {r.side} {r.symbol} {r.quantity:.6f} at {r.price:,.4f} "
                     f"(${r.total:,.2f}) - {r.reason}")
+            if started is not None:
+                log(f"    {tag}: {tf} close decided and filled {time.time() - started:.0f}s after starting "
+                    f"({len(done)} trades), before retraining")
 
     def advise(self):
         """Re-check the portfolio advice with the fresh signals and alert on any change (Windows, Zalo)."""
@@ -143,18 +165,20 @@ class LiveService:
         try:
             live_now = preview.compute()
             self.status["last_preview"] = _now()
-            if paper.is_open():  # the paper AI may trade at any moment on the live readings
-                done = paper.step_ai_live(live_now)
-                shock = paper.step_shock()
+            for book in paper.BOOKS:  # the paper AI may trade at any moment, at that moment's price
+                if not paper.is_open(book):
+                    continue
+                readings = live_now if book is paper.MAIN else preview.compute(
+                    extra=book.symbols, path=preview.ALT_PREVIEW)
+                done = paper.step_ai_live(readings, book=book)
+                shock = paper.step_shock(book=book)
                 done = pd.concat([d for d in (done, shock) if len(d)]) if len(done) or len(shock) else done
+                tag = "PAPER AI" if book is paper.MAIN else f"PAPER {book.key.upper()}"
                 for r in done.itertuples() if len(done) else []:
-                    log(f"    PAPER AI (live): {r.side} {r.symbol} {r.quantity:.6f} at {r.price:,.2f} "
+                    log(f"    {tag} (live): {r.side} {r.symbol} {r.quantity:.6f} at {r.price:,.4f} "
                         f"(${r.total:,.2f}) - {r.reason}")
-            for book in paper.BOOKS[1:]:  # other books: shock dip-buys (no live AI readings for them)
-                if paper.is_open(book):
-                    for r in paper.step_shock(book=book).itertuples():
-                        log(f"    PAPER {book.key.upper()} (live): {r.side} {r.symbol} {r.quantity:.6f} at "
-                            f"{r.price:,.4f} (${r.total:,.2f}) - {r.reason}")
+            self.stock_close()
+            self.market_crash_check()
             hour = time.strftime("%Y%m%d%H", time.gmtime())
             if hour != self._paper_hour:  # balance history: one point an hour
                 self._paper_hour = hour
@@ -173,31 +197,53 @@ class LiveService:
             self._preview_failing = True
 
     def stock_jobs(self):
-        """Hourly: the stock paper trial's balance point. Once a day after the US close (from STOCK_HOUR UTC):
-        retrain the stock AI, run the stock paper trial's daily step, and send stock alerts."""
+        """Hourly: the stock paper trial's balance point and weekly updates."""
         try:
             if stockpaper.is_open():
                 stockpaper.snapshot()
                 news = stockpaper.milestones(lambda title, body: notify.send(title, body))
                 if news:
                     log(f"    STOCKS: {news}")
-            today = time.strftime("%Y-%m-%d", time.gmtime())
-            if time.gmtime().tm_hour < STOCK_HOUR or self.status.get("stocks_day") == today:
-                return
+        except Exception:
+            log(f"stock snapshot failed:\n{traceback.format_exc()}")
+
+    def market_crash_check(self):
+        """Every minute: the US market crash monitor on the live S&P 500 price (Binance SPY perpetual)."""
+        try:
+            spy = stocks.live_prices(["SPY"])["SPY"][0]
+            msgs, _ = stocks.crash_check(lambda title, body: notify.send(title, body), spy)
+            for m in msgs:
+                log(f"    MARKET WARNING: {m}")
+        except Exception as e:
+            if not getattr(self, "_crash_failing", False):
+                log(f"market crash check failed ({type(e).__name__}: {e}); will keep trying")
+            self._crash_failing = True
+            return
+        self._crash_failing = False
+
+    def stock_close(self):
+        """Every minute: at the US market close (16:00 New York time, Monday to Friday) decide and fill the stock
+        paper trades at that moment's Binance price, send stock alerts, then retrain the stock AI."""
+        ny = datetime.now(NEW_YORK)
+        today = ny.strftime("%Y-%m-%d")
+        if ny.weekday() >= 5 or not (16 <= ny.hour < 20) or self.status.get("stocks_day") == today:
+            return
+        self.status["stocks_day"] = today  # once a day, even if a step below fails
+        self._save_status()
+        try:
             t0 = time.time()
+            for t in stocks.STOCKS:
+                stocks.candles(t, max_age_hours=0)  # today's close
+            if stockpaper.is_open():
+                n = stockpaper.step()
+                log(f"    STOCKS paper at the US close: {n} trades [{time.time() - t0:.0f}s after 16:00 New York]")
+            for s in stocks.alerts(lambda title, body: notify.send(title, body)):
+                log(f"    STOCK ALERT: {s}")
             r = stockai.train_and_test()
             log(f"stock AI retrained: AUC {r['auc']['2023-now']:.3f} (2023-now); trading on it "
                 f"{'beats' if r['trade_on_ai'] else 'does not beat'} holding [{time.time() - t0:.0f}s]")
-            if stockpaper.is_open():
-                n = stockpaper.step()
-                log(f"    STOCKS paper: {n} trades")
-            sent = stocks.alerts(lambda title, body: notify.send(title, body))
-            for s in sent:
-                log(f"    STOCK ALERT: {s}")
-            self.status["stocks_day"] = today
-            self._save_status()
         except Exception:
-            log(f"stock jobs failed:\n{traceback.format_exc()}")
+            log(f"stock close jobs failed:\n{traceback.format_exc()}")
 
     # ---------- streaming ----------
     def _url(self):

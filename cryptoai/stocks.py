@@ -168,8 +168,10 @@ def save_portfolio(holdings, cash):
 
 
 def advise(holdings, cash, analysis, prices):
-    """Hold-first advice per holding, plus a plan for spare cash. Testing found holding beat trend-rule trading on
-    every stock here, so the advice never says sell on a trend signal; it flags concentration and risk instead."""
+    """Advice per holding, plus a plan for spare cash, following the tested monthly rule (buy_list below): hold the
+    stocks above their 200-day average in equal shares and sell one at the monthly review if it is below it (daily
+    in-and-out trading on one stock did NOT beat holding; the monthly rule across the stocks did). Also flags
+    concentration. ETFs (SPY, QQQ) are held."""
     a = analysis.set_index("ticker") if len(analysis) else analysis
     rows, total = [], cash
     for h in holdings:
@@ -183,26 +185,115 @@ def advise(holdings, cash, analysis, prices):
         r["pnl"] = r["value"] - r["shares"] * r["avg_cost"]
         r["pnl_pct"] = r["price"] / r["avg_cost"] - 1 if r["avg_cost"] else float("nan")
         info = a.loc[r["ticker"]] if r["ticker"] in a.index else None
-        if r["weight"] > MAX_WEIGHT:
+        if r["weight"] > MAX_WEIGHT and r["ticker"] not in ETFS:  # an index ETF is already diversified
             r["action"] = "TRIM"
             r["reason"] = (f"{r['weight']:.0%} of your stock money is in this one stock. Consider trimming to about "
                            f"{MAX_WEIGHT:.0%} or less, so one bad fall can't hurt too much.")
         elif info is None:
             r["action"], r["reason"] = "HOLD", "Not tracked here; no trend or risk data."
-        elif not info["above_200d"]:
-            r["action"] = "HOLD"
-            r["reason"] = (f"Below its 200-day average ({info['from_200d']:+.0%}). In testing, selling on that did not "
-                           "beat holding; check that the reason you own it still holds.")
+        elif r["ticker"] in ETFS:
+            r["action"], r["reason"] = "HOLD", "Index ETF: a diversified core to hold."
         else:
-            r["action"] = "HOLD"
-            r["reason"] = f"Uptrend ({info['from_200d']:+.0%} vs its 200-day average). Holding beat trading in testing."
+            c = history(r["ticker"])
+            avg200 = c.tail(200).mean()
+            if r["price"] > avg200:
+                r["action"] = "HOLD"
+                r["reason"] = (f"In the buy-for-hold list: {r['price'] / avg200 - 1:+.0%} vs its 200-day average. "
+                               f"Next review {next_review():%b %d}.")
+            else:
+                r["action"] = "SELL at review"
+                r["reason"] = (f"Below its 200-day average ({r['price'] / avg200 - 1:+.0%}). The tested rule sells it at "
+                               f"the monthly review ({next_review():%b %d}, US close) if it is still below then.")
         if info is not None:
             r["reason"] += f" Worst fall in 10 years: {info['worst_10y']:.0%}."
     plan = None
     if cash >= config.MIN_TRADE_USDT * 4:
-        plan = (f"Invest the ${cash:,.0f} in 4 weekly steps of ${cash / 4:,.0f} rather than all at once (buying in steps "
-                f"beat a lump sum when prices fell). Putting part in an index ETF (SPY or QQQ) spreads the risk.")
+        picks = [t for t in PICKS if (h := history(t)).iloc[-1] > h.tail(200).mean()]
+        plan = (f"Invest the ${cash:,.0f} in 4 weekly steps of ${cash / 4:,.0f} (buying in steps beat a lump sum when "
+                f"prices fell), spread equally over the buy-for-hold list ({', '.join(picks)}), or partly in an "
+                "index ETF (SPY or QQQ).")
     return pd.DataFrame(rows), total, plan
+
+
+# ---------- buy-for-hold list (experiments/stock_hold_picks.py, adopted 2026-10-06) ----------
+# Equal weight across the stocks whose close is above their 200-day average, reviewed once a month: Sharpe 0.83 vs
+# 0.61 for holding all equally on 2016-2022 and 2.05 vs 1.91 on 2023-2026; worst fall -46% vs -59% on 2016-2022.
+PICKS = [t for t in STOCKS if t not in ETFS]
+
+
+def buy_list(analysis, live=None):
+    """The adopted buy-for-hold list now: each stock in or out, using the live Binance price as today's close."""
+    live = live or {}
+    rows = []
+    for _, r in analysis.set_index("ticker").loc[[t for t in PICKS if t in set(analysis["ticker"])]].iterrows():
+        c = history(r.name)
+        avg200 = c.tail(200).mean()
+        px = live.get(r.name, (r["close"],))[0]
+        rows.append({"ticker": r.name, "name": r["name"], "price": px, "avg200": avg200, "in": px > avg200,
+                     "from_200d": px / avg200 - 1, "vol": r["vol"], "worst_10y": r["worst_10y"], "1y": r["1y"]})
+    df = pd.DataFrame(rows)
+    n = int(df["in"].sum())
+    df["weight"] = np.where(df["in"], 1 / n if n else 0.0, 0.0)
+    return df.sort_values(["in", "from_200d"], ascending=[False, False])
+
+
+def next_review():
+    """The next monthly review: the last US trading day's close of this month (weekends skipped)."""
+    now = pd.Timestamp.now(tz="America/New_York")
+    end = (now + pd.offsets.MonthEnd(0)).normalize()
+    while end.dayofweek >= 5:
+        end -= pd.Timedelta("1D")
+    return end + pd.Timedelta("16h")
+
+
+# ---------- market crash monitor ----------
+CRASH_STATE = config.LOG_DIR / "market_crash_state.json"
+CORRECTION, BEAR, SHARP_DAY = -0.10, -0.20, -0.04
+
+
+def market_status(spy_live=None):
+    """Where the US market (SPY) stands: vs its 1-year high, its 200-day average, and today's move."""
+    c = history("SPY")
+    px = spy_live or float(c.iloc[-1])
+    high = max(float(c.tail(252).max()), px)
+    avg200 = float(c.tail(200).mean())
+    dd, day = px / high - 1, px / float(c.iloc[-1]) - 1 if spy_live else float(c.iloc[-1] / c.iloc[-2] - 1)
+    level = "Bear market" if dd <= BEAR else "Correction" if dd <= CORRECTION else "Normal"
+    return {"price": px, "from_high": dd, "high": high, "avg200": avg200, "above_200d": px > avg200,
+            "today": day, "level": level}
+
+
+def crash_check(notify_fn, spy_live):
+    """Alert once per change: the market entering a correction (-10%) or bear market (-20%), SPY closing below or
+    back above its 200-day average, or a sharp day (-4%). Information only: in testing, selling everything at these
+    points cut the 2020/2022 falls but missed the 2023-2026 rebound (experiments/stock_hold_picks.py)."""
+    import json
+    s = market_status(spy_live)
+    try:
+        state = json.loads(CRASH_STATE.read_text())
+    except (OSError, ValueError):
+        state = {"level": "Normal", "above_200d": True, "sharp_day": None}
+    msgs = []
+    order = ["Normal", "Correction", "Bear market"]
+    if order.index(s["level"]) > order.index(state.get("level", "Normal")):
+        msgs.append(f"{s['level']}: the S&P 500 (SPY ${s['price']:,.2f}) is {s['from_high']:.1%} below its 1-year high.")
+    elif s["level"] == "Normal" and state.get("level") != "Normal":
+        msgs.append(f"Recovered: the S&P 500 is back within 10% of its high ({s['from_high']:.1%}).")
+    if s["above_200d"] != state.get("above_200d", True):
+        msgs.append(f"The S&P 500 is now {'above' if s['above_200d'] else 'below'} its 200-day average "
+                    f"(${s['avg200']:,.2f}).")
+    today = pd.Timestamp.now(tz="America/New_York").strftime("%Y-%m-%d")
+    if s["today"] <= SHARP_DAY and state.get("sharp_day") != today:
+        msgs.append(f"Sharp drop: the S&P 500 is {s['today']:+.1%} today.")
+        state["sharp_day"] = today
+    state.update(level=s["level"], above_200d=s["above_200d"])
+    with config.atomic(CRASH_STATE) as tmp:
+        tmp.write_text(json.dumps(state))
+    if msgs:
+        notify_fn("Market warning: " + s["level"], "\n".join(msgs) + "\nWhat testing found: selling everything at "
+                  "such points cut the worst fall in 2020/2022 (-46% vs -59%) but missed the 2023-2026 rebound. The "
+                  "tested rule sells a stock when it closes a month below its 200-day average. Check your risk limit.")
+    return msgs, s
 
 
 ALERT_STATE = config.LOG_DIR / "stock_alerts.json"

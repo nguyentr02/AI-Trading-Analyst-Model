@@ -1,6 +1,8 @@
 """Paper trading for US stocks: pretend accounts on Binance's stock perpetual prices, decided once a day.
 
 Accounts (each starts with the same cash, split equally across stocks where it holds several):
+- buylist   the adopted rule (experiments/stock_hold_picks.py): equal weight across the stocks above their 200-day
+            average, rebalanced at the start and at each month's last US close
 - hold      buy every stock in stocks.STOCKS (ETFs excluded) at the start, equal weight, never sell
 - index     all in the Nasdaq-100 ETF (QQQ), never sell
 - dca       the same stocks as hold, bought in 4 weekly steps, never sell (buying in steps beat a lump sum
@@ -24,8 +26,9 @@ FEE, SLIPPAGE = config.FEE, 0.0005
 DIR = config.ROOT / "paper_stocks"
 ACCOUNT, TRADES, BALANCE = DIR / "account.json", DIR / "trades.csv", DIR / "balance.csv"
 COLUMNS = ["time", "account", "symbol", "side", "price", "quantity", "total", "fee", "reason", "cash_after"]
-ACCOUNTS = {"hold": "Hold all (equal weight)", "index": "Nasdaq-100 ETF (QQQ)", "dca": "Buy in 4 weekly steps",
-            "trend200": "200-day trend rule", "ai_gate": "AI risk filter"}
+ACCOUNTS = {"buylist": "Buy-for-hold list (monthly)", "hold": "Hold all (equal weight)",
+            "index": "Nasdaq-100 ETF (QQQ)", "dca": "Buy in 4 weekly steps", "trend200": "200-day trend rule",
+            "ai_gate": "AI risk filter"}
 PICKS = [t for t in stocks.STOCKS if t not in stocks.ETFS]
 TRIAL = pd.Timedelta("28D")
 DCA_STEPS = 4
@@ -139,10 +142,40 @@ def step(force=False):
                 _buy(acct, account, t, sleeve, prices[t], why)
             elif not want and holding:
                 _sell_all(acct, account, t, prices[t], why)
+    # The buy-for-hold list: rebalance at the start and at each month's last US close.
+    ny_today = pd.Timestamp.now(tz="America/New_York").normalize()
+    if acct.get("buylist_review") is None or stocks.next_review().normalize() == ny_today:
+        _rebalance_buylist(acct, prices)
+        acct["buylist_review"] = str(ny_today.date())
     acct["last_day"] = day
     _save(acct)
     snapshot(acct, prices)
     return len(trades()) - before
+
+
+def _rebalance_buylist(acct, prices):
+    """Equal weight across the stocks whose price is above their 200-day average; sell the rest."""
+    a = acct["accounts"]["buylist"]
+    keep = [t for t in PICKS if prices[t] > stocks.history(t).tail(200).mean()]
+    for t in list(a["qty"]):
+        if t not in keep and a["qty"][t] > 0:
+            _sell_all(acct, "buylist", t, prices[t], "monthly review: below its 200-day average")
+    total = a["cash"] + sum(q * prices[t] for t, q in a["qty"].items())
+    target = total / len(keep) if keep else 0.0
+    for t in keep:  # trim the overweight first, so the cash is there for the underweight
+        over = a["qty"].get(t, 0.0) * prices[t] - target
+        if over > config.MIN_TRADE_USDT:
+            share = over / (a["qty"][t] * prices[t])
+            qty = a["qty"][t] * share
+            fill = prices[t] * (1 - SLIPPAGE)
+            a["cash"] += qty * fill * (1 - FEE)
+            a["cost"][t] *= 1 - share
+            a["qty"][t] -= qty
+            _log("buylist", t, "SELL", fill, qty, qty * fill, "monthly review: back to an equal share", a["cash"])
+    for t in keep:
+        under = target - a["qty"].get(t, 0.0) * prices[t]
+        if under > config.MIN_TRADE_USDT:
+            _buy(acct, "buylist", t, under, prices[t], "monthly review: equal share (above its 200-day average)")
 
 
 def value(acct, prices):

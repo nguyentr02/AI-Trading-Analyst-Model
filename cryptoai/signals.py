@@ -15,11 +15,12 @@ def label(prob):
     return "NEUTRAL"
 
 
-def current(name, refresh=True):
+def current(name, refresh=True, fast=False):
+    """Latest signal per coin. `fast` skips refreshing funding/premium (unused by the models) to decide quickly."""
     if model.load(name) is None:
         raise RuntimeError(f"No {name} model yet. Run: python -m cryptoai train")
     tf = config.MODELS[name]["timeframe"]
-    raw = {s: df.iloc[-400:] for s, df in data.closed(tf, refresh).items()}
+    raw = {s: df.iloc[-400:] for s, df in data.closed(tf, refresh, refresh_derivatives=refresh and not fast).items()}
     probs = model.predict_history(raw, name, refresh)
     rows = []
     for sym, df in raw.items():

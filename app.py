@@ -1738,6 +1738,9 @@ def page_stock_signals():
     except Exception as e:
         st.error(f"Could not load stock history: {e}")
         return
+    stock_buy_list(a)
+    market_monitor()
+    st.subheader("Every stock")
     if ai is None:
         st.info("The stock AI hasn't run yet. It retrains every day after the US close, or run "
                 "`python -m cryptoai stock-ai`.")
@@ -1771,6 +1774,55 @@ def page_stock_signals():
         column_config={"AI: P(up, 5 days)": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1)})
     st.caption("For stocks, testing found holding beat every trading rule (Stock backtest). Use these to decide what "
                "to buy and when to add in steps, not to jump in and out.")
+
+
+@st.fragment(run_every=60)
+def stock_buy_list(a):
+    """Live 'buy for hold' recommendation: the tested monthly uptrend rule on today's Binance prices."""
+    st.subheader("Buy for hold now", icon=":material/shopping_cart:")
+    try:
+        live = get_stock_prices()
+    except Exception:
+        live = {}
+    b = stocks.buy_list(a, live)
+    n = int(b["in"].sum())
+    st.caption(f"Tested rule: hold an equal share of every stock above its 200-day average, and review once a month "
+               f"(next review {when(stocks.next_review().tz_convert('UTC'))}). It beat holding all {len(b)} stocks "
+               "equally in both test periods (Sharpe 0.83 vs 0.61 on 2016-2022, 2.05 vs 1.91 on 2023-2026) with a "
+               "smaller worst fall (-46% vs -59%). Buy in steps; this is a rule tested on past data, not a guarantee.")
+    cards = st.container(horizontal=True, gap="small")
+    for r in b[b["in"]].itertuples():
+        cards.metric(f"{r.ticker}", f"{r.weight:.1%}", f"{r.from_200d:+.0%} vs 200-day", border=True,
+                     delta_color="off", width=150, help=f"{r.name}: ${r.price:,.2f}; worst fall in 10 years "
+                     f"{r.worst_10y:.0%}. Equal share of the {n} stocks in the list.")
+    out = b[~b["in"]]
+    if len(out):
+        st.caption("Not in the list now (below their 200-day average): " + ", ".join(
+            f"{r.ticker} ({r.from_200d:+.0%})" for r in out.itertuples()) + ". If you hold one, the rule sells it at "
+            "the monthly review if it is still below.")
+
+
+@st.fragment(run_every=60)
+def market_monitor():
+    """US market crash monitor: S&P 500 vs its high and 200-day average, live."""
+    try:
+        s = stocks.market_status(get_stock_prices()["SPY"][0])
+    except Exception as e:
+        st.caption(f"Market monitor unavailable: {e}")
+        return
+    color = {"Normal": "green", "Correction": "orange", "Bear market": "red"}[s["level"]]
+    with st.container(border=True):
+        line = st.container(horizontal=True, vertical_alignment="center", gap="small")
+        line.markdown("**US market crash monitor**", width="content")
+        line.badge(s["level"], color=color, icon=":material/monitor_heart:")
+        st.caption(f"S&P 500 (SPY ${s['price']:,.2f}): {s['from_high']:+.1%} from its 1-year high, "
+                   f"{'above' if s['above_200d'] else 'below'} its 200-day average (${s['avg200']:,.2f}), "
+                   f"{s['today']:+.1%} today. Alerts (Windows, Zalo) when it falls 10% (correction) or 20% (bear "
+                   "market) from its high, crosses its 200-day average, or drops 4%+ in a day.")
+        st.caption("What testing found: selling everything at those points cut the worst fall in the 2020 and 2022 "
+                   "crashes (-46% vs -59%) but missed the 2023-2026 rebound (Sharpe 1.47 vs 1.91). So the warning "
+                   "tells you; the tested rule only sells a stock at the monthly review once it is below its 200-day "
+                   "average.")
 
 
 def page_stock_backtest():
@@ -1872,9 +1924,9 @@ def page_stock_paper():
     if acct is None:
         with st.container(border=True, width=560):
             st.markdown("**Start a 4-week stock paper trial**")
-            st.caption("Five pretend accounts: hold all stocks, all in QQQ, buy in 4 weekly steps, the 200-day trend "
-                       "rule, and the AI risk filter. Daily decisions after the US close, at Binance stock prices. "
-                       "Nothing real is traded.")
+            st.caption("Six pretend accounts: the buy-for-hold list (monthly), hold all stocks, all in QQQ, buy in 4 "
+                       "weekly steps, the 200-day trend rule, and the AI risk filter. Decisions at the US close, at "
+                       "Binance stock prices. Nothing real is traded.")
             cash = st.number_input("Starting balance per account (USD)", min_value=100.0, value=1000.0, step=100.0,
                                    key="stock_paper_cash")
             if st.button("Start trial", type="primary", icon=":material/play_arrow:", key="stock_paper_start"):
@@ -1895,8 +1947,8 @@ def stock_paper_dashboard():
         return
     v = stockpaper.value(acct, prices)
     start, names = acct["start_cash"], acct["names"]
-    st.caption(f"Trial: {local(acct['opened']):%b %d, %H:%M} → {when(acct['ends'])}. Decisions once a day after the "
-               "US close; prices from Binance's stock futures. Nothing real is traded.")
+    st.caption(f"Trial: {local(acct['opened']):%b %d, %H:%M} → {when(acct['ends'])}. Decisions at the US close "
+               "(16:00 New York), filled at that moment's Binance stock-futures price. Nothing real is traded.")
     cards = st.container(horizontal=True, gap="medium")
     for k in sorted(v, key=lambda k: -v[k]):
         cards.metric(names[k], f"${v[k]:,.2f}", f"{v[k] - start:+,.2f} ({v[k] / start - 1:+.2%})", border=True)
@@ -1906,6 +1958,8 @@ def stock_paper_dashboard():
         st.line_chart(h, height=300, y_label="Balance (USD)", x_label="", alt="Balance of every stock paper account")
     with st.expander("What each account does", icon=":material/info:"):
         st.markdown(
+            "- **Buy-for-hold list (monthly)**: an equal share of every stock above its 200-day average, rebalanced "
+            "at each month's last US close (the tested rule on Stock signals).\n"
             "- **Hold all**: every stock (ETFs excluded) bought equally at the start, never sold.\n"
             "- **Nasdaq-100 ETF**: all in QQQ, never sold.\n"
             "- **Buy in 4 weekly steps**: the same stocks, bought a quarter at a time each week.\n"
