@@ -144,6 +144,143 @@ def style(fig, height):
     return fig
 
 
+# Explanations shown when hovering a table's column header. One meaning per name across the whole dashboard.
+COLUMN_HELP = {
+    # prices and markets
+    "#": "Rank by market cap (CoinGecko).",
+    "Coin": "The coin (or pair) this row is about.",
+    "Pair": "The Binance trading pair.",
+    "Stock": "The stock or ETF this row is about.",
+    "Price": "Last traded price.",
+    "Price (Binance)": "Last price of the stock's perpetual futures on Binance (trades 24/7).",
+    "1h": "Price change over the last hour.",
+    "24h": "Price change over the last 24 hours.",
+    "7d": "Price change over the last 7 days.",
+    "30d": "Price change over the last 30 days.",
+    "90d": "Price change over the last 90 days.",
+    "1 month": "Price change over the last month (about 21 trading days).",
+    "1 year": "Price change over the last year.",
+    "Last 7 days": "Hourly price over the last 7 days.",
+    "Volume 24h": "Value traded in the last 24 hours.",
+    "Market cap": "Price x coins in circulation.",
+    "24h range": "Lowest and highest price in the last 24 hours.",
+    "Fully diluted value": "Price x the maximum number of coins that will ever exist.",
+    "Circulating supply": "Coins in circulation now.",
+    "Supply issued": "Circulating supply as a share of the maximum supply.",
+    "All-time high": "The highest price ever.",
+    "From all-time high": "How far the price is below its all-time high.",
+    "From 1y high": "How far the price is below its highest close of the last year.",
+    "Typical daily move": "Standard deviation of daily returns over 30 days: how much the price usually moves in a day.",
+    "Typical yearly swing": "Annualised volatility over the last year: how much the price usually moves in a year.",
+    "Days with 10%+ moves (90d)": "Days in the last 90 with a rise or fall of 10% or more.",
+    "Worst fall (10y)": "The deepest fall from a peak in the last 10 years.",
+    # trend and signals
+    "Trend": "Daily close vs its 200-day average: above = long-term uptrend.",
+    "Trend rule": "The 50-day trend rule: hold while the daily close is above its 50-day average, cash below.",
+    "Long-term trend": "Daily close vs its 200-day average.",
+    "Short-term trend": "Daily close vs its 50-day average.",
+    "vs 200-day": "How far the daily close is above (+) or below (-) its 200-day average.",
+    "AI next 1 day": "The AI's call and chance of a rise over the next day (next-1-day model).",
+    "AI: P(up, 5 days)": "The stock AI's chance the price is higher 5 trading days from now. Weak: see Stock signals.",
+    "New signal": "The signal the model switched to.",
+    "Prediction": "Which model: next 4 hours, next 1 day or next 3 days.",
+    "P(up)": "The model's chance the price is higher at the end of its window.",
+    # trades and accounts
+    "Side": "BUY or SELL.",
+    "Amount": "Number of coins or shares.",
+    "Avg cost": "Average price paid per coin, including fees.",
+    "Value": "What the holding is worth at today's price.",
+    "P&L": "Profit or loss in dollars: value now minus what it cost.",
+    "P&L %": "Profit or loss as a share of what it cost.",
+    "Invested": "Share of the sleeve held in the coin rather than cash.",
+    "Total (USDT)": "Value of the trade.",
+    "Total (USD)": "Value of the trade.",
+    "Fee": "Exchange fee paid on the trade (0.1%).",
+    "Reason": "Why the account traded.",
+    "Account": "The paper-trading account.",
+    "Total P&L": "Balance now minus the starting balance.",
+    "Realised": "Profit or loss locked in by sales, after fees.",
+    "Unrealised": "Profit or loss on coins still held, at today's price vs what they cost.",
+    "Fees paid": "All exchange fees paid so far (slippage is in the fill prices).",
+    "Trades": "Number of trades so far.",
+    "vs buy & hold": "This account's balance minus the buy & hold benchmark's.",
+    "Invested now": "Share of the account held in coins rather than cash.",
+    "Advice": "What the AI suggests for this holding.",
+    "Why": "The reason for the advice.",
+    "Share": "Share of your portfolio in this holding.",
+    # research and testing
+    "Strategy": "The trading approach being tested.",
+    "Period": "The years tested. Rules are chosen on the earlier period and checked once on the later one.",
+    "Return": "Total gain or loss over the period, after fees.",
+    "Sharpe": "Return per unit of risk (annualised). Higher is better; 1 is good.",
+    "Worst fall": "The deepest fall from a peak during the period (max drawdown).",
+    "Hold, Sharpe 2023-26": "Sharpe of simply holding the stock in 2023-2026.",
+    "Best rule, Sharpe 2023-26": "Sharpe of the best trend rule (chosen on 2016-2022) in 2023-2026.",
+    "AUC": "How well the model ranks rises above falls on data it didn't train on. 0.5 is a coin flip.",
+    "Accuracy": "Share of correct up/down calls on data the model didn't train on.",
+    "Training rows": "Candles the model learnt from.",
+    "Kept": "Whether the new model was kept (it must beat a coin flip on unseen data).",
+    "Data up to": "The last candle the model trained on.",
+    "Date": "When the test was run.",
+    "Area": "What kind of idea was tested.",
+    "Idea": "What was tested.",
+    "Result (data not used for choosing)": "The result on data the idea was not chosen or tuned on.",
+    "Verdict": "Adopted, not adopted, partly, or a finding.",
+    "Details": "Where the code and full results are.",
+    "NEAR $": "$1,000 in NEAR at the start of 2025, at the end of the test.",
+    "ZEC $": "$1,000 in ZEC at the start of 2025, at the end of the test.",
+    "Sharpe (both)": "Sharpe of NEAR and ZEC together.",
+    "AI accuracy (AUC)": "The AI's AUC on NEAR and ZEC (0.5 is a coin flip).",
+    "50-day rule on": "Which coins the 50-day trend rule traded.",
+    "Sharpe 2022-2024": "Sharpe on 2022-2024 (where choices were made).",
+    "Sharpe 2025-2026": "Sharpe on 2025-2026 (the one-time check).",
+    "Return 2025-2026": "Total return on 2025-2026, after fees.",
+    "Event": "What kind of whale event.",
+    "Size": "Dollar size of the trade or liquidations.",
+    "Detail": "More about the event.",
+    "Coin pair": "A Binance pair, like BTC/USDT.",
+    # backtest page
+    "Year": "Calendar year of the test.",
+    "AI strategy": "The AI strategy's return that year, after fees.",
+    "AI return": "The AI strategy's total return, after fees.",
+    "AI Sharpe": "The AI strategy's return per unit of risk. Higher is better.",
+    "AI worst drop": "The AI strategy's deepest fall from a peak.",
+    "Buy & hold": "Buying at the start and holding to the end, the same period.",
+    "Hold return": "Buy & hold's total return over the same period.",
+    "Hold Sharpe": "Buy & hold's return per unit of risk over the same period.",
+    "Hold worst drop": "Buy & hold's deepest fall from a peak over the same period.",
+    "Chance Sharpe > 0": "Probabilistic Sharpe ratio: the chance the strategy's true Sharpe is above zero.",
+    "Chance beats hold": "The chance the strategy's true Sharpe is above buy & hold's.",
+    "Fee per trade": "The exchange fee assumed per buy or sell (Binance's is 0.1%).",
+}
+COLUMN_HELP_PREFIX = {"Time (": "Date and time of the event, in the time zone chosen at the top.",
+                      "When (": "When the signal changed, in the time zone chosen at the top.",
+                      "Trained (": "When the model was retrained, in the time zone chosen at the top.",
+                      "AI next": "The AI's call (bullish, bearish or neutral) for this coin over that window."}
+
+
+def _help_for(col):
+    if col in COLUMN_HELP:
+        return COLUMN_HELP[col]
+    return next((h for p, h in COLUMN_HELP_PREFIX.items() if str(col).startswith(p)), None)
+
+
+def table(data, column_config=None, **kwargs):
+    """st.dataframe with an explanation on every column header (shown on hover), from COLUMN_HELP."""
+    df = data.data if hasattr(data, "data") and hasattr(data, "to_html") else data  # a pandas Styler
+    config = dict(column_config or {})
+    for col in df.columns:
+        text = _help_for(col)
+        if not text:
+            continue
+        cfg = config.get(col)
+        if cfg is None:
+            config[col] = st.column_config.Column(help=text)
+        elif isinstance(cfg, dict) and not cfg.get("help"):
+            config[col] = {**cfg, "help": text}
+    return st.dataframe(data, column_config=config, **kwargs)
+
+
 @st.cache_data(ttl=300, max_entries=8, show_spinner="Loading AI signals…")
 def get_signals(tf, model_version=None):
     """`model_version` (the model's training time) makes a retrained model show up immediately.
@@ -297,7 +434,7 @@ def whale_panel():
     if len(ev):
         kinds = {"trade": "Big trade", "liquidation": "Liquidation", "cascade": "Liquidation cascade",
                  "oi": "Open interest jump"}
-        st.dataframe(pd.DataFrame({f"Time ({tz_label()})": local(ev["time"]).dt.strftime("%b %d, %H:%M:%S"),
+        table(pd.DataFrame({f"Time ({tz_label()})": local(ev["time"]).dt.strftime("%b %d, %H:%M:%S"),
                                    "Event": ev["kind"].map(kinds), "Coin": ev["symbol"].str.replace("/USDT", ""),
                                    "Side": ev["side"], "Size": ev["usd"].map(lambda v: usd(v) if v else ""),
                                    "Detail": ev["note"].fillna("")}),
@@ -385,10 +522,10 @@ def supply_table():
                       help="Circulating supply as a share of the maximum supply. Blank when there is no maximum.")})
 
 
-def colored_table(table, pct, alt, column_config=None):
+def colored_table(df, pct, alt, column_config=None):
     """Dataframe with percentage columns formatted and colored green (up) or red (down)."""
-    st.dataframe(
-        table.style.format({k: "{:+.2%}" for k in pct}, na_rep="–")
+    table(
+        df.style.format({k: "{:+.2%}" for k in pct}, na_rep="–")
         .map(lambda v: f"color: {UP}" if pd.notna(v) and v > 0 else f"color: {DOWN}" if pd.notna(v) and v < 0 else "",
              subset=pct),
         hide_index=True, width="stretch", alt=alt, column_config=column_config,
@@ -507,7 +644,7 @@ def signal_board():
     log = pd.read_csv(config.SIGNAL_LOG)
     log = log[log["changed"] & log["timeframe"].isin(config.MODELS) & log["symbol"].isin(config.SYMBOLS)]
     log = log.tail(30).iloc[::-1]
-    st.dataframe(
+    table(
         pd.DataFrame({
             f"When ({tz_label()})": local(pd.to_datetime(log["checked_at"], format="ISO8601", utc=True))
             .dt.strftime("%b %d, %H:%M"),
@@ -775,7 +912,7 @@ def page_backtest():
         years = [{"Year": str(y), "AI return": (1 + g.strategy).prod() - 1, "Hold return": (1 + g.buy_hold).prod() - 1,
                   "AI Sharpe": metrics.sharpe(g.strategy, q), "Hold Sharpe": metrics.sharpe(g.buy_hold, q)}
                  for y, g in rets.groupby(rets.index.year) if len(g) > q / 12]
-        st.dataframe(
+        table(
             pd.DataFrame(years).style.format({"AI return": "{:+.0%}", "Hold return": "{:+.0%}",
                                               "AI Sharpe": "{:.2f}", "Hold Sharpe": "{:.2f}"})
             .map(lambda v: f"color: {UP}" if v > 0 else f"color: {DOWN}" if v < 0 else "",
@@ -789,7 +926,7 @@ def page_backtest():
             fees.append({"Fee per trade": f"{f * 100:g}%" + ("  (Binance standard)" if f == 0.001
                          else "  (paying fees in BNB)" if f == 0.00075 else ""),
                          "AI return": (1 + r).prod() - 1, "Sharpe": metrics.sharpe(r, q)})
-        st.dataframe(pd.DataFrame(fees).style.format({"AI return": "{:+.0%}", "Sharpe": "{:.2f}"}),
+        table(pd.DataFrame(fees).style.format({"AI return": "{:+.0%}", "Sharpe": "{:.2f}"}),
                      hide_index=True, width="stretch", alt="AI strategy results at different trading fees")
 
     st.subheader("All coins")
@@ -813,7 +950,7 @@ def page_backtest():
                  "Sharpe": f"{bm['sharpe']:.2f} ± {bm['sharpe_se']:.2f}", "Chance Sharpe > 0": bm["psr"],
                  "Chance beats hold": bm["psr_vs_hold"], "Trades": sum(r["Trades"] for r in rows)})
     pct = ["AI strategy", "Buy & hold", "AI worst drop", "Hold worst drop"]
-    st.dataframe(
+    table(
         pd.DataFrame(rows).style.format({**{k: "{:+.0%}" for k in pct}, "Chance Sharpe > 0": "{:.0%}",
                                          "Chance beats hold": "{:.0%}"})
         .map(lambda v: f"color: {UP}" if v > 0 else f"color: {DOWN}" if v < 0 else "", subset=["AI strategy", "Buy & hold"]),
@@ -835,7 +972,7 @@ def page_backtest():
     fig.update_yaxes(title_text="Walk-forward AUC")
     st.plotly_chart(style(fig, 240), width="stretch", alt="Model accuracy after each retrain")
     with st.expander("Every retrain", icon=":material/list:"):
-        st.dataframe(
+        table(
             h.iloc[::-1][["trained_at", "last_candle", "rows", "oos_auc", "oos_accuracy", "accepted"]].rename(columns={
                 "trained_at": f"Trained ({tz_label()})", "last_candle": "Data up to", "rows": "Training rows",
                 "oos_auc": "AUC", "oos_accuracy": "Accuracy", "accepted": "Kept"}),
@@ -1013,7 +1150,7 @@ def portfolio_overview(holdings):
         st.plotly_chart(fig, width="stretch", alt="Share of the portfolio in each coin")
 
     st.subheader("Holdings")
-    table = pd.DataFrame({
+    tbl = pd.DataFrame({
         "Coin": pv["symbol"].map(coin_label),
         "Amount": pv["amount"],
         "Price": pv["price"],
@@ -1024,10 +1161,10 @@ def portfolio_overview(holdings):
         "P&L %": pv["pnl_pct"],
     })
     for n in names:
-        table[f"AI {config.MODELS[n]['label'].lower()}"] = pv["symbol"].map(sigs[n]).map(SIGNAL_ARROW).fillna("not tracked")
-    signal_cols = [c for c in table if c.startswith("AI ")]
-    st.dataframe(
-        table.style.format({"P&L %": "{:+.1%}", "P&L": "{:+,.2f}"})
+        tbl[f"AI {config.MODELS[n]['label'].lower()}"] = pv["symbol"].map(sigs[n]).map(SIGNAL_ARROW).fillna("not tracked")
+    signal_cols = [c for c in tbl if c.startswith("AI ")]
+    table(
+        tbl.style.format({"P&L %": "{:+.1%}", "P&L": "{:+,.2f}"})
         .map(lambda v: f"color: {UP}" if v > 0 else f"color: {DOWN}" if v < 0 else "", subset=["P&L", "P&L %"])
         .map(lambda v: f"color: {UP}" if v.startswith("▲") else f"color: {DOWN}" if v.startswith("▼") else "",
              subset=signal_cols),
@@ -1092,7 +1229,7 @@ def paper_stats(acct, prices, v, t, now):
                      "Invested now": 1 - sum(sl["cash"] for sl in sleeves.values()) / v[a] if v[a] else 0})
     df = pd.DataFrame(rows).sort_values("Total P&L", ascending=False)
     signed = ["Total P&L", "Realised", "Unrealised", "vs buy & hold"]
-    st.dataframe(
+    table(
         df.style.format({**{c: "{:+,.2f}" for c in signed}, "Fees paid": "${:,.2f}"})
         .map(lambda x: f"color: {UP}" if isinstance(x, float) and x > 0.005 else
              f"color: {DOWN}" if isinstance(x, float) and x < -0.005 else "", subset=signed),
@@ -1211,7 +1348,7 @@ def paper_dashboard(book_key="main"):
                  "P&L %": None, "Invested": None, "AI next 1 day": ""})
     wallet = pd.DataFrame(rows)
     with left_col:
-        st.dataframe(
+        table(
             wallet.style.format({"P&L %": "{:+.2%}", "P&L": "{:+,.2f}"}, na_rep="–")
             .map(lambda x: f"color: {UP}" if isinstance(x, (int, float)) and x > 0 else
                  f"color: {DOWN}" if isinstance(x, (int, float)) and x < 0 else "", subset=["P&L", "P&L %"])
@@ -1240,7 +1377,7 @@ def paper_dashboard(book_key="main"):
     if t.empty:
         st.caption("No trades yet in this account.")
         return
-    st.dataframe(
+    table(
         pd.DataFrame({f"Time ({tz_label()})": local(t["time"]).dt.strftime("%b %d, %H:%M"), "Pair": t["symbol"],
                       "Side": t["side"],
                       "Price": t["price"], "Amount": t["quantity"], "Total (USDT)": t["total"], "Fee": t["fee"],
@@ -1390,7 +1527,7 @@ def alt_scan_table():
     except Exception as e:
         st.error(f"Could not scan Binance: {e}")
         return
-    st.dataframe(
+    table(
         pd.DataFrame({"Coin": s["symbol"].str.replace("/USDT", ""), "Price": s["price"],
                       "24h": s["change_24h"], "30d": s["change_30d"], "90d": s["change_90d"],
                       "Typical daily move": s["daily_vol"], "Days with 10%+ moves (90d)": s["days_10pct"],
@@ -1424,12 +1561,12 @@ def page_alt_learnt():
         f"{', '.join(coin(s) for s in altcoins.WATCH)} (Altcoins → Paper trading).")
     st.subheader("NEAR and ZEC, 2025-01 to 2026-10, $1000 each")
     st.caption("Tested on data the AI never trained on.")
-    st.dataframe(altcoins.NEAR_ZEC.style.format({"NEAR $": "${:,.0f}", "ZEC $": "${:,.0f}", "Sharpe (both)": "{:.2f}",
+    table(altcoins.NEAR_ZEC.style.format({"NEAR $": "${:,.0f}", "ZEC $": "${:,.0f}", "Sharpe (both)": "{:.2f}",
                                                  "AI accuracy (AUC)": "{:.3f}"}, na_rep="–"),
                  hide_index=True, width="stretch", alt="NEAR and ZEC test results")
     st.subheader("The 50-day rule on more coins")
     st.caption("Coins picked each month by trading volume, delisted coins included.")
-    st.dataframe(altcoins.UNIVERSE.style.format({"Sharpe 2022-2024": "{:.2f}", "Sharpe 2025-2026": "{:.2f}",
+    table(altcoins.UNIVERSE.style.format({"Sharpe 2022-2024": "{:.2f}", "Sharpe 2025-2026": "{:.2f}",
                                                  "Return 2025-2026": "{:+.1%}"}),
                  hide_index=True, width="stretch", alt="Trend rule on wider coin lists")
     st.caption("Sharpe: return per unit of risk (higher is better). AUC: 0.5 is a coin flip. Details in "
@@ -1524,7 +1661,7 @@ def page_stocks():
     st.markdown(f"**Trading with trend rules beat simply holding on {beats} of {len(a)} stocks** in 2023-2026 (rule "
                 "chosen per stock on 2016-2022: buy above its 50, 100 or 200-day average, sell below). On stocks, "
                 "unlike crypto, holding has been better.")
-    table = pd.DataFrame({
+    tbl = pd.DataFrame({
         "Stock": a["ticker"] + " · " + a["name"],
         "Price (Binance)": [live.get(t, (np.nan,))[0] for t in a["ticker"]],
         "24h": [live.get(t, (np.nan, np.nan))[1] for t in a["ticker"]],
@@ -1536,8 +1673,8 @@ def page_stocks():
     })
     st.session_state["_stock_order"] = list(a["ticker"])
     pct = ["24h", "1 year", "From 1y high", "Worst fall (10y)"]
-    st.dataframe(
-        table.style.format({**{c: "{:+.1%}" for c in pct}, "Typical yearly swing": "{:.0%}", "Price (Binance)": "${:,.2f}",
+    table(
+        tbl.style.format({**{c: "{:+.1%}" for c in pct}, "Typical yearly swing": "{:.0%}", "Price (Binance)": "${:,.2f}",
                             "Hold, Sharpe 2023-26": "{:.2f}", "Best rule, Sharpe 2023-26": "{:.2f}"}, na_rep="–")
         .map(lambda x: f"color: {UP}" if isinstance(x, float) and x > 0 else
              f"color: {DOWN}" if isinstance(x, float) and x < 0 else "", subset=["24h", "1 year"])
@@ -1623,7 +1760,7 @@ def page_stock_signals():
                      "Short-term trend": "▲ above 50-day" if r["above_50d"] else "▼ below 50-day",
                      "AI: P(up, 5 days)": p, "1 month": r["1m"], "Typical yearly swing": r["vol"]})
     df = pd.DataFrame(rows)
-    st.dataframe(
+    table(
         df.style.format({"vs 200-day": "{:+.1%}", "1 month": "{:+.1%}", "Typical yearly swing": "{:.0%}",
                          "AI: P(up, 5 days)": "{:.0%}"}, na_rep="–")
         .map(lambda x: f"color: {UP}" if str(x).startswith("▲") else f"color: {DOWN}" if str(x).startswith("▼") else "",
@@ -1661,7 +1798,7 @@ def page_stock_backtest():
         for label, period in (("choose", "2016-2022"), ("check", "2023-2026")):
             rows.append({"Strategy": name, "Period": period, "Return": row[f"{key}_{label}_return"],
                          "Sharpe": row[f"{key}_{label}_sharpe"], "Worst fall": row[f"{key}_{label}_worst"]})
-    st.dataframe(pd.DataFrame(rows).style.format({"Return": "{:+.0%}", "Sharpe": "{:.2f}", "Worst fall": "{:+.0%}"},
+    table(pd.DataFrame(rows).style.format({"Return": "{:+.0%}", "Sharpe": "{:.2f}", "Worst fall": "{:+.0%}"},
                                                  na_rep="–"),
                  hide_index=True, width="stretch", alt=f"{t} hold vs trend rule by period")
     st.caption(f"Rule: hold {t} while its daily close is above its {rule}-day average, else cash; 0.1% cost per trade. "
@@ -1673,7 +1810,7 @@ def page_stock_backtest():
         names = {"hold": "Hold all", "ai_gate": "AI risk filter (out below 45%)", "ai_tilt": "AI-sized"}
         rows = [{"Strategy": names[k], "Period": p, "Return": v[p]["return"], "Sharpe": v[p]["sharpe"],
                  "Worst fall": v[p]["worst"]} for k, v in ai["strategies"].items() for p in v]
-        st.dataframe(pd.DataFrame(rows).style.format({"Return": "{:+.0%}", "Sharpe": "{:.2f}", "Worst fall": "{:+.0%}"}),
+        table(pd.DataFrame(rows).style.format({"Return": "{:+.0%}", "Sharpe": "{:.2f}", "Worst fall": "{:+.0%}"}),
                      hide_index=True, width="stretch", alt="Stock AI strategies vs holding")
         st.caption(f"Equal-weight basket of all the stocks, decisions on Mondays. The AI variant chosen on 2019-2022 "
                    f"({names[ai['chosen']]}) {'beat' if ai['trade_on_ai'] else 'did not beat'} holding in both periods.")
@@ -1696,7 +1833,7 @@ def page_stock_portfolio():
                      border=True)
         cards.metric("Spare cash", f"${cash:,.2f}", border=True)
         st.subheader("Advice")
-        st.dataframe(
+        table(
             pd.DataFrame({"Stock": adv["ticker"], "Advice": adv["action"], "Value": adv["value"], "Share": adv["weight"],
                           "P&L %": adv["pnl_pct"], "Why": adv["reason"]})
             .style.format({"Value": "${:,.2f}", "P&L %": "{:+.1%}"}, na_rep="–")
@@ -1779,7 +1916,7 @@ def stock_paper_dashboard():
     t = stockpaper.trades().iloc[::-1]
     if len(t):
         st.subheader("Trade history")
-        st.dataframe(pd.DataFrame({f"Time ({tz_label()})": local(t["time"]).dt.strftime("%b %d, %H:%M"),
+        table(pd.DataFrame({f"Time ({tz_label()})": local(t["time"]).dt.strftime("%b %d, %H:%M"),
                                    "Account": t["account"].map(names), "Stock": t["symbol"], "Side": t["side"],
                                    "Price": t["price"], "Total (USD)": t["total"], "Reason": t["reason"]})
                      .style.map(lambda x: f"color: {UP}; font-weight: 600" if x == "BUY" else
@@ -1805,7 +1942,7 @@ def page_strategy_lab():
     pick = st.segmented_control("Show", ["All", *log["Verdict"].unique()], default="All", key="lab_filter") or "All"
     shown = log if pick == "All" else log[log["Verdict"] == pick]
     colors = {research_log.ADOPTED: UP, research_log.NOT_ADOPTED: DOWN, research_log.PARTLY: "#F4B000"}
-    st.dataframe(shown.iloc[::-1].style.map(lambda x: f"color: {colors[x]}; font-weight: 600" if x in colors else "",
+    table(shown.iloc[::-1].style.map(lambda x: f"color: {colors[x]}; font-weight: 600" if x in colors else "",
                                             subset=["Verdict"]),
                  hide_index=True, width="stretch", alt="Every tested idea with its result and verdict",
                  column_config={"Idea": st.column_config.TextColumn(width="large"),
