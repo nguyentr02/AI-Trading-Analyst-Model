@@ -21,7 +21,7 @@ import pandas as pd
 import requests
 from websockets.sync.client import connect
 
-from . import advisor, config, droprisk, model, notify, paper, preview, signals
+from . import advisor, config, droprisk, model, notify, paper, preview, signals, whales
 
 STREAM_URL = "wss://stream.binance.com:9443/stream?streams="
 WAIT_FOR_ALL = 20  # seconds to wait for every symbol's close message before processing anyway
@@ -181,6 +181,7 @@ class LiveService:
 
     def run(self):
         log(f"Live service starting: {', '.join(self.symbols.values())} on {', '.join(self.timeframes)}")
+        whales.WhaleWatch().start()  # background threads: big trades, liquidations, open interest (alerts only)
         backoff = 2
         while True:
             self.status["state"] = "catching up"
@@ -188,10 +189,12 @@ class LiveService:
             self.catch_up()
             try:
                 # No client keepalive pings: retraining at a candle close occupies the process for minutes,
-                # so our own pings timed out and dropped the stream every time. Binance pings us instead and
-                # waits up to 10 minutes for the reply, which the client sends in the background.
+                # so our own pings timed out and dropped the stream every time. Binance pings us instead; the
+                # client answers in the background, but only while it keeps reading the socket. With the default
+                # 16-message queue it stopped reading once the queue filled during retraining, missed Binance's
+                # pings and was dropped ("Pong timeout"), so the queue is unbounded (a few hundred small messages).
                 with connect(self._url(), open_timeout=15, close_timeout=5, max_size=2**20,
-                             ping_interval=None) as ws:
+                             ping_interval=None, max_queue=None) as ws:
                     log("Connected to Binance kline stream; waiting for candles to close")
                     self.status["state"] = "listening"
                     self._save_status()

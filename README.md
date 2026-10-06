@@ -127,11 +127,13 @@ offline again, run the setup command from step 2 without `-Online`.
 
 | Page | What you see |
 |---|---|
-| **Market** | Live prices updating every second, 24h change, high/low, volume, market cap, supply, all-time high |
-| **Signals** | The AI's current call for each coin, and a log of recent signal changes. The badge at the top shows whether the live learning service is running |
+| **Market** | Live prices updating every second, 24h change, high/low, volume, market cap, supply, all-time high, and whale activity (big trades, liquidations, open interest) |
+| **Signals** | The AI's current call and drop risk for each coin, and a log of recent signal changes. The badge at the top shows whether the live learning service is running |
 | **Chart** | Candlestick chart with the model's P(up) underneath |
 | **Backtest** | How the strategy would have done on data the model had not seen, model accuracy, **Learning history**, and a **Retrain models** button |
 | **Portfolio** | AI advice (buy / sell / hold, with amounts) for your holdings and spare cash, plus value, profit/loss and allocation |
+| **Paper trading** | The 4-week trial: five pretend accounts trading live, balances, wallets and trade history |
+| **Altcoins** | Experimental, not traded: trend status, AI P(up) and drop risk for NEAR and ZEC, the most volatile liquid altcoins on Binance, and what testing found about altcoins |
 
 Use the **Prediction** switch (Next 4 hours, Next 1 day, Next 3 days) at the top of Signals, Chart and Backtest.
 
@@ -219,6 +221,21 @@ changes to Buy or Sell. Check the advice any time with `.venv\Scripts\python -m 
 
   Alert settings, including the bot token, are saved in `notify.json`, which is kept off GitHub. To turn
   Windows notifications off, set `"windows": false` in that file.
+
+### Whale alerts
+
+The live service also watches Binance for big players (free public data) and alerts you on the same channels:
+
+| Alert | When |
+|---|---|
+| **Whales buying / selling** | 3 or more market trades of $2M+ (BTC), $1M+ (ETH) or $300k+ (BNB, SOL) on the same side within a minute, or one trade 5 times that size |
+| **Liquidation cascade** | More than $10M of leveraged longs (or shorts) force-closed within 5 minutes on our 4 coins |
+| **Open interest jump** | Futures open interest (leveraged positions) changes 3%+ in an hour, far more than usual |
+
+The **Market** page shows the last hour (whale buys minus sells, open interest change, liquidations) and recent
+events. These alerts are information only; nothing trades on them. Research and our own test found whale data
+mostly signals that a big move is coming, not which way (see `docs/research/whale-tracking.md`). To turn them
+off, set `"whales": false` in `notify.json`. Every event is saved to `logs\whale_events.csv`.
 
 ### Paper trading (4-week trial)
 

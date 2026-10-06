@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from cryptoai import (advisor, auth, backtest, config, data, droprisk, live, market, metrics, model, notify, paper,
-                      portfolio, preview, signals)
+from cryptoai import (advisor, altcoins, auth, backtest, config, data, droprisk, live, market, metrics, model, notify,
+                      paper, portfolio, preview, signals, whales)
 
 ASSETS = config.ROOT / "assets"
 st.set_page_config(page_title="Crypto AI", page_icon=str(ASSETS / "icon.svg"), layout="wide")
@@ -230,7 +230,46 @@ def page_market():
     st.title("Market")
     st.caption("Live prices from Binance, market data from CoinGecko.")
     live_market()
+    whale_panel()
     supply_table()
+
+
+@st.fragment(run_every=30)
+def whale_panel():
+    """Whale activity from the live service's whale watch (cryptoai/whales.py): big trades, liquidations, leverage."""
+    st.subheader("Whale activity")
+    s = whales.load_status()
+    if s is None or (pd.Timestamp.now(tz="UTC") - pd.Timestamp(s["updated"])).total_seconds() > 15 * 60:
+        st.caption("Whale watch not running. It starts with the live learning service.")
+        return
+    cards = st.container(horizontal=True, gap="medium")
+    for sym in config.SYMBOLS:
+        t = s["trades_1h"].get(sym, {})
+        buy, sell = t.get("BUY", 0), t.get("SELL", 0)
+        oi = s["oi"].get(sym, {})
+        net = buy - sell
+        cards.metric(f"{coin(sym)} whales, last hour",
+                     f"{'+' if net >= 0 else '−'}{usd(abs(net)) if net else '$0'} net",
+                     f"open interest {oi['change_1h']:+.1%} in 1h" if oi else None, border=True, delta_color="off",
+                     help=f"Spot market buys minus sells of ${whales.BIG_TRADE[sym] / 1e6:g}M or more in one trade "
+                          f"(bought {usd(buy) if buy else '$0'}, sold {usd(sell) if sell else '$0'}), and the change "
+                          "in futures open interest (leveraged positions) over the last hour.")
+    liq = s["liquidations_1h"]
+    st.caption(f"Liquidations in the last hour: longs {usd(liq['LONG']) if liq['LONG'] else '$0'}, shorts "
+               f"{usd(liq['SHORT']) if liq['SHORT'] else '$0'} (Binance reports at most one per coin per second, so "
+               f"these are undercounts). Alerts go out on bursts of whale trades, liquidation cascades over "
+               f"{usd(whales.LIQ_ALERT)} in 5 minutes, and unusual 1-hour open interest jumps. Whale data mostly "
+               "signals volatility ahead, not direction.")
+    ev = whales.load_events(500)
+    ev = ev[ev["kind"].isin(["trade", "cascade", "oi"]) | (ev["usd"] >= 1_000_000)].tail(12).iloc[::-1]
+    if len(ev):
+        kinds = {"trade": "Big trade", "liquidation": "Liquidation", "cascade": "Liquidation cascade",
+                 "oi": "Open interest jump"}
+        st.dataframe(pd.DataFrame({"Time (UTC)": ev["time"].dt.strftime("%b %d, %H:%M:%S"),
+                                   "Event": ev["kind"].map(kinds), "Coin": ev["symbol"].str.replace("/USDT", ""),
+                                   "Side": ev["side"], "Size": ev["usd"].map(lambda v: usd(v) if v else ""),
+                                   "Detail": ev["note"].fillna("")}),
+                     hide_index=True, width="stretch", alt="Recent whale events")
 
 
 @st.fragment(run_every=config.LIVE_REFRESH)
@@ -1103,6 +1142,90 @@ def paper_dashboard():
                        "Fee": st.column_config.NumberColumn(format="dollar")})
 
 
+# ---------------- altcoins ----------------
+@st.cache_data(ttl=1800, show_spinner="Scanning Binance for the biggest movers (about 15 seconds)…")
+def get_alt_scan():
+    return altcoins.scan()
+
+
+@st.cache_data(ttl=900, show_spinner="Running the AI on the watched altcoins…")
+def get_alt_readings(version):
+    return altcoins.readings()
+
+
+def page_altcoins():
+    st.title("Altcoins")
+    st.caption("Experimental and for information only: the AI does not trade altcoins. Testing found it reads them "
+               "barely better than a coin flip, while the 50-day trend rule did far better on them.")
+
+    st.subheader("AI reading: " + " and ".join(coin(s) for s in altcoins.WATCH))
+    try:
+        r = get_alt_readings(model_version("4h"))
+    except Exception as e:
+        st.error(f"Could not compute the readings: {e}")
+        r = pd.DataFrame()
+    cards = st.columns(max(len(r), 1), gap="medium")
+    for card, row in zip(cards, r.itertuples()):
+        with card.container(border=True):
+            st.markdown(f"#### {coin(row.symbol)}")
+            st.caption(f"Last 4h close ${row.price:,.4g} · {row.candle:%b %d, %H:%M} UTC")
+            line = st.container(horizontal=True, vertical_alignment="center", gap="small")
+            line.markdown("Trend rule (50-day)", width="content")
+            if row.above_50d:
+                line.badge("Hold", icon=":material/trending_up:", color="green")
+            else:
+                line.badge("Cash", icon=":material/trending_down:", color="red")
+            st.caption(f"Daily close {row.from_50d:+.1%} vs its 50-day average. On alts this rule beat the AI.")
+            if hasattr(row, "p_up_1d"):
+                st.progress(float(row.p_up_1d), text=f"AI: P(up, next 1 day) {row.p_up_1d:.0%}")
+            if hasattr(row, "p_drop"):
+                st.progress(min(float(row.p_drop), 1.0), text=f"Drop risk, 3 days {row.p_drop:.0%} "
+                            f"({droprisk.level(row.p_drop)})")
+    st.caption("The AI here is the live model trained on BTC, ETH, BNB and SOL, applied to each altcoin as is.")
+
+    st.subheader("Biggest movers on Binance")
+    try:
+        s = get_alt_scan()
+        st.dataframe(
+            pd.DataFrame({"Coin": s["symbol"].str.replace("/USDT", ""), "Price": s["price"],
+                          "24h": s["change_24h"], "30d": s["change_30d"], "90d": s["change_90d"],
+                          "Typical daily move": s["daily_vol"], "Days with 10%+ moves (90d)": s["days_10pct"],
+                          "Trend rule": s["above_50d"].map({True: "▲ Hold", False: "▼ Cash"}),
+                          "Volume 24h": s["volume_24h"].map(usd)})
+            .style.format({"24h": "{:+.1%}", "30d": "{:+.0%}", "90d": "{:+.0%}", "Typical daily move": "{:.1%}",
+                           "Price": "${:,.4g}"})
+            .map(lambda x: f"color: {UP}" if isinstance(x, float) and x > 0 else
+                 f"color: {DOWN}" if isinstance(x, float) and x < 0 else "", subset=["24h", "30d", "90d"])
+            .map(lambda x: f"color: {UP}" if str(x).startswith("▲") else f"color: {DOWN}", subset=["Trend rule"]),
+            hide_index=True, width="stretch", alt="Most volatile liquid altcoins on Binance")
+        st.caption(f"Altcoins trading at least {usd(altcoins.MIN_VOLUME)} a day on Binance, ranked by their typical "
+                   "daily move over 30 days (BTC moves about 2% a day). Coins that just doubled usually give much of "
+                   "it back. Refreshed every 30 minutes.")
+    except Exception as e:
+        st.error(f"Could not scan Binance: {e}")
+
+    st.subheader("What the AI learnt about altcoins")
+    st.markdown(
+        "- **Reading alts it never trained on:** the AI trained on BTC, ETH, BNB and SOL reads NEAR and ZEC about "
+        "as well as BTC: slightly better than a coin flip.\n"
+        "- **Training on them too** was chosen on 2022-2024 but did worse on 2025-2026, and it made the AI slightly "
+        "worse on the four main coins. So NEAR and ZEC were not added.\n"
+        "- **The trend rule wins on alts.** On ZEC's 23x run, the AI kept selling part of the way up; the 50-day "
+        "rule held on.\n"
+        "- **More coins did not help the trend rule.** The most-traded alts each month are usually the ones in a "
+        "hype cycle (LUNA before its crash, DOGE, PEPE), and the rule got whipsawed on them.")
+    st.markdown("**NEAR and ZEC, 2025-01 to 2026-10, $1000 each** (tested on data the AI never trained on)")
+    st.dataframe(altcoins.NEAR_ZEC.style.format({"NEAR $": "${:,.0f}", "ZEC $": "${:,.0f}", "Sharpe (both)": "{:.2f}",
+                                                 "AI accuracy (AUC)": "{:.3f}"}, na_rep="–"),
+                 hide_index=True, width="stretch", alt="NEAR and ZEC test results")
+    st.markdown("**The 50-day rule on more coins** (picked each month by trading volume, delisted coins included)")
+    st.dataframe(altcoins.UNIVERSE.style.format({"Sharpe 2022-2024": "{:.2f}", "Sharpe 2025-2026": "{:.2f}",
+                                                 "Return 2025-2026": "{:+.1%}"}),
+                 hide_index=True, width="stretch", alt="Trend rule on wider coin lists")
+    st.caption("Sharpe: return per unit of risk (higher is better). AUC: 0.5 is a coin flip. Details in "
+               "experiments/altcoins_near_zec.py and experiments/trend_universe.py.")
+
+
 pages = [
     st.Page(page_market, title="Market", icon=":material/monitoring:", url_path="market", default=True),
     st.Page(page_signals, title="Signals", icon=":material/bolt:", url_path="signals"),
@@ -1110,6 +1233,7 @@ pages = [
     st.Page(page_backtest, title="Backtest", icon=":material/history:", url_path="backtest"),
     st.Page(page_portfolio, title="Portfolio", icon=":material/account_balance_wallet:", url_path="portfolio"),
     st.Page(page_paper, title="Paper trading", icon=":material/science:", url_path="paper"),
+    st.Page(page_altcoins, title="Altcoins", icon=":material/rocket_launch:", url_path="altcoins"),
 ]
 if online_request():
     pages.append(st.Page(page_sign_out, title="Sign out", icon=":material/logout:", url_path="sign-out"))

@@ -67,6 +67,21 @@ Backtest rules for any of these: 1-minute bars; a limit order fills only if pric
 
 **Split entries (idea 1), tested 2026-10-06 in `experiments/split_entries.py`: not adopted.** Basket of BTC/ETH/BNB/SOL, 50-day rule, 0.15% cost per side. Buying over 3, 5 or 10 days instead of at once barely changed 2022-2024 (Sharpe 0.98-1.01 vs 0.98), and split5 was chosen. On 2025-2026 it lost to lump sum: Sharpe 0.79 vs 0.93, return +38.5% vs +52.8%, worst drop about the same (-28.6% vs -28.4%). Splitting exits as well was worst in both periods (2025-2026 Sharpe 0.68). The rule's profits come from the first days of big trends; entering slowly gives up more of those than it saves on whipsaws. This matches the lump-sum evidence [21].
 
+**Weekly DCA guided by the AI, tested 2026-10-06 in `experiments/dca_ai.py`.** $100 a week into the 4 coins, never
+selling; score = final value per $1 put in.
+
+| Strategy | 2022-2024 | 2025-2026 |
+|---|---|---|
+| Plain DCA ($100 every week) | $2.879 | $1.066 |
+| Lump sum at the start | $1.310 | $0.829 |
+| Dip DCA (2x below the 50-day average, 0.5x above) | **$2.903** | **$1.073** |
+| Trend DCA (buy only above the 50-day average) | $2.741 | $1.048 |
+| AI DCA (amount scaled by P(up, 3 days), skip on High drop risk) | $2.884 | $1.059 |
+
+Dip DCA was chosen on 2022-2024 and also beat plain DCA on 2025-2026, so it passed. The gain is small: under 1%
+in both periods, with the worst fall about the same. Letting the AI size the weekly buys did not help. Plain DCA
+beat a lump sum by a wide margin in both periods because both started near a top.
+
 Not tested: rebalancing (idea 2), grid while in cash (idea 3), execution (idea 4).
 
 Related: the 50-day rule's trades on 2022-2026 win only 21-26% of the time, but average wins are 5.6-9.7 times average losses (`experiments/top_traders.py` comparison), the opposite profile to a grid (many small wins, rare large losses).
