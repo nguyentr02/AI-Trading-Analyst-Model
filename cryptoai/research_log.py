@@ -62,4 +62,9 @@ LOG = pd.DataFrame([
      "experiments/dca_ai.py"),
     ("2026-10-06", "Trading rules", "Shock dip-buy trigger scaled to each coin's volatility",
      "Total +17.5% vs +83.1% for the fixed 10% rule", NOT_ADOPTED, "experiments/vol_scaled_shock.py"),
+    ("2026-10-06", "Learnt policy", "AI learns what/when/how much to buy and sell: return model + 216 sizing "
+     "policies searched on 2022-2024", "Sharpe 0.69 vs 0.95 (50-day rule); also behind on 2022-2024 (0.91 vs "
+     "0.98); deflated Sharpe 3%", NOT_ADOPTED, "experiments/policy_learning.py"),
+    ("2026-10-06", "Diagnostic", "Which patterns the AI relies on (2025-2026, unseen)", "Mostly Bitcoin's "
+     "short-term moves reversing; 15-minute patterns add ~nothing on new data", FINDING, "cryptoai/explain.py"),
 ], columns=["Date", "Area", "Idea", "Result (data not used for choosing)", "Verdict", "Details"])

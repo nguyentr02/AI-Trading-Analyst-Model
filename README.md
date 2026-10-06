@@ -136,6 +136,7 @@ offline again, run the setup command from step 2 without `-Online`.
 | **Altcoins → Altcoin market** | Experimental: trend status, AI P(up) and drop risk for NEAR, ZEC, XRP, DOGE, AVAX and LINK, and the most volatile liquid altcoins on Binance |
 | **Altcoins → Altcoin paper trading** | A separate 4-week trial of the same five accounts on those six altcoins |
 | **Altcoins → What the AI learnt** | What testing found about altcoins |
+| **Research → Patterns the AI learnt** | Which kinds of patterns the AI relies on (trend, momentum, Bitcoin's moves, ...), and what each one shows: how often the AI expected a rise vs how often the price really rose, on data it never trained on. Refreshed daily |
 | **Research → Strategy lab** | Every idea tested so far, with its result on data it wasn't chosen on, and whether it was adopted |
 
 The navbar has three menus: **Top coins** (the pages for BTC, ETH, BNB and SOL), **Altcoins** and **Research**.
@@ -351,6 +352,7 @@ Repeat Part 1 on the new PC. Price data and models are rebuilt by `train.bat`. Y
 .venv\Scripts\python -m cryptoai daily      # one learning run
 .venv\Scripts\python -m cryptoai live       # always-on learning service
 .venv\Scripts\python -m cryptoai advice     # buy / sell / hold advice for your portfolio
+.venv\Scripts\python -m cryptoai explain    # what patterns the AI learnt, checked on unseen data
 .venv\Scripts\python -m cryptoai set-login  # set the login for online access
 .venv\Scripts\python -m cryptoai tunnel     # put the dashboard online now (Ctrl+C to stop)
 .venv\Scripts\python -m cryptoai simulate BNB/USDT 2026-01-01 2026-06-01 --cash 1000   # paper-trade a past period

@@ -21,7 +21,7 @@ import pandas as pd
 import requests
 from websockets.sync.client import connect
 
-from . import advisor, altcoins, config, droprisk, model, notify, paper, preview, signals, whales
+from . import advisor, altcoins, config, droprisk, explain, model, notify, paper, preview, signals, whales
 
 STREAM_URL = "wss://stream.binance.com:9443/stream?streams="
 WAIT_FOR_ALL = 20  # seconds to wait for every symbol's close message before processing anyway
@@ -54,6 +54,11 @@ class LiveService:
             self._learn_model(name, reason)
         if tf == "4h":
             self.learn_drop_risk(reason)
+        if tf == "1d":
+            try:
+                explain.compute()  # refresh "what the AI learnt" once a day
+            except Exception:
+                log(f"pattern explanation failed:\n{traceback.format_exc()}")
         if tf == advisor_timeframe():
             self.advise()
         self.paper_trade(tf)

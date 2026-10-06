@@ -16,6 +16,7 @@ def main():
     sub.add_parser("daily", help="daily learning: fetch new candles, retrain, keep the better model, log signals")
     sub.add_parser("live", help="always-on service: learn and signal at every candle close, catch up after downtime")
     sub.add_parser("advice", help="buy / sell / hold advice for your saved portfolio")
+    sub.add_parser("explain", help="what patterns the AI has learnt, and whether they held on unseen data")
     login = sub.add_parser("set-login", help="set the username and password for opening the dashboard online")
     login.add_argument("--username", help="asked for if left out")
     sub.add_parser("tunnel", help="put the dashboard online via a Cloudflare tunnel and send you the link")
@@ -37,6 +38,17 @@ def main():
             print(f"Training {name} ({spec['label']}) ...")
             for k, v in model.train(name).items():
                 print(f"  {k}: {v}")
+
+    elif args.cmd == "explain":
+        from . import explain
+        out = explain.compute()
+        print(f"Trained before {out['holdout_from'][:10]}, judged on {out['holdout_rows']:,} later rows "
+              f"(AUC {out['holdout_auc']:.3f}).\nHow much the AI relies on each kind of pattern (AUC lost when shuffled):")
+        for r in out["reliance"]:
+            print(f"  {r['group']:<32} {r['auc_drop']:+.4f}")
+        print("What the patterns it relies on most show:")
+        for p in out["patterns"]:
+            print(f"  - {explain.sentence(p)}")
 
     elif args.cmd == "advice":
         from . import advisor

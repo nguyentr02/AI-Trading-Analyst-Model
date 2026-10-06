@@ -1,13 +1,14 @@
 """Dashboard. Run with:  .venv\\Scripts\\streamlit run app.py"""
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from cryptoai import (advisor, altcoins, auth, backtest, config, data, droprisk, live, market, metrics, model, notify,
-                      paper, portfolio, preview, research_log, signals, whales)
+from cryptoai import (advisor, altcoins, auth, backtest, config, data, droprisk, explain, live, market, metrics, model,
+                      notify, paper, portfolio, preview, research_log, signals, whales)
 
 ASSETS = config.ROOT / "assets"
 st.set_page_config(page_title="Crypto AI", page_icon=str(ASSETS / "icon.svg"), layout="wide")
@@ -205,7 +206,9 @@ st.session_state.setdefault("model", "4h")
 st.session_state.setdefault("chart_interval", "4h")
 st.session_state.setdefault("chart_ind", ["MA", "Volume", "AI signal"])
 st.session_state.setdefault("sym", config.SYMBOLS[0])
-for k in ("model", "sym", "chart_interval", "chart_ind"):
+st.session_state.setdefault("alt_chart_interval", "4h")
+st.session_state.setdefault("alt_chart_ind", ["MA", "Volume"])
+for k in ("model", "sym", "chart_interval", "chart_ind", "alt_chart_interval", "alt_chart_ind"):
     st.session_state[k] = st.session_state[k]
 
 
@@ -521,6 +524,12 @@ def coin(sym):
     return sym.split("/")[0]
 
 
+def price_text(x):
+    """A price with enough decimals for its size: 85,592.10 / 2.1340 / 0.006327."""
+    decimals = 2 if x >= 100 else 4 if x >= 1 else max(4, 3 - int(np.floor(np.log10(x)))) if x > 0 else 2
+    return f"{x:,.{decimals}f}"
+
+
 def page_chart():
     bar = st.container(horizontal=True, vertical_alignment="bottom", gap="medium")
     sym = bar.segmented_control("Coin", config.SYMBOLS, key="sym", required=True, format_func=coin)
@@ -594,7 +603,7 @@ def price_chart(sym, interval, shown):
     last = df.iloc[-1]
     last_color = UP if last.close >= last.open else DOWN
     fig.add_hline(y=last.close, line=dict(color=last_color, width=1, dash="dot"), row=1, col=1)
-    fig.add_annotation(x=1, xref="paper", y=last.close, yref="y", text=f" {last.close:,.2f} ", showarrow=False,
+    fig.add_annotation(x=1, xref="paper", y=last.close, yref="y", text=f" {price_text(last.close)} ", showarrow=False,
                        xanchor="left", font=dict(color="white", size=11), bgcolor=last_color)
 
     if "volume" in row:
@@ -1225,12 +1234,14 @@ def page_altcoins():
     st.caption("Experimental: the live AI does not trade altcoins; a separate paper trial does (Altcoins → Paper "
                "trading). Testing found the AI reads them barely better than a coin flip, while the 50-day trend "
                "rule did far better on them.")
-    st.subheader("AI reading")
     try:
         r = get_alt_readings(model_version("4h"))
     except Exception as e:
         st.error(f"Could not compute the readings: {e}")
         r = pd.DataFrame()
+    alt_chart_section(r)
+
+    st.subheader("AI reading")
     per_row = 3
     for i in range(0, len(r), per_row):
         cols = st.columns(per_row, gap="medium")
@@ -1241,6 +1252,80 @@ def page_altcoins():
                "Updated at every 4h close.")
     st.subheader("Biggest movers on Binance")
     alt_scan_table()
+
+
+@st.cache_data(ttl=5, show_spinner=False)
+def alt_ticker(sym):
+    return data.exchange().fetch_ticker(sym)
+
+
+def _alt_choices():
+    """The watched altcoins, then the biggest movers (if the scan has run)."""
+    try:
+        movers = list(get_alt_scan()["symbol"])
+    except Exception:
+        movers = []
+    return list(dict.fromkeys([*altcoins.WATCH, *movers]))
+
+
+def _pick_from_table():
+    """Clicking a row in the movers table opens that coin's chart."""
+    rows = st.session_state["alt_scan_sel"].selection.rows
+    if rows:
+        st.session_state["alt_chart_coin"] = st.session_state["_alt_scan_symbols"][rows[0]]
+
+
+def alt_chart_section(readings):
+    """A live candle chart for the selected altcoin, shown once a coin is picked."""
+    sym = st.selectbox("Coin chart", _alt_choices(), index=None, key="alt_chart_coin", format_func=coin,
+                       placeholder="Select a coin to see its chart")
+    if sym is None:
+        st.caption("Pick a coin above, or click a row in the Biggest movers table below.")
+        return
+    bar = st.container(horizontal=True, vertical_alignment="bottom", gap="medium")
+    interval = bar.segmented_control("Interval", list(CHART_INTERVALS), key="alt_chart_interval", required=True)
+    shown = bar.pills("Indicators", [i for i in INDICATORS if i != "AI signal"], key="alt_chart_ind",
+                      selection_mode="multi")
+    main, side = st.columns([3.3, 1], gap="medium")
+    with main:
+        alt_price_header(sym)
+        price_chart(sym, interval, tuple(shown))
+    with side:
+        st.subheader("AI reading", icon=":material/psychology:")
+        row = readings[readings["symbol"] == sym] if len(readings) else readings
+        if len(row):
+            with st.container(border=True):
+                alt_card(next(row.itertuples()))
+            st.caption("Experimental: the AI was trained on BTC, ETH, BNB and SOL.")
+        else:
+            try:
+                d = recent_candles(sym, "1d", limit=60)["close"].iloc[:-1]
+                above = d.iloc[-1] > d.tail(50).mean()
+                with st.container(border=True):
+                    line = st.container(horizontal=True, vertical_alignment="center", gap="small")
+                    line.markdown("Trend rule (50-day)", width="content")
+                    line.badge("Hold" if above else "Cash", color="green" if above else "red",
+                               icon=":material/trending_up:" if above else ":material/trending_down:")
+                    st.caption(f"Daily close {d.iloc[-1] / d.tail(50).mean() - 1:+.1%} vs its 50-day average.")
+            except Exception as e:
+                st.caption(f"Trend unavailable: {e}")
+            st.caption(f"The AI reading covers {', '.join(coin(s) for s in altcoins.WATCH)}; for other coins only "
+                       "the trend rule is shown.")
+
+
+@st.fragment(run_every=5)
+def alt_price_header(sym):
+    try:
+        t = alt_ticker(sym)
+    except Exception as e:
+        st.caption(f"Price unavailable: {e}")
+        return
+    head = st.container(horizontal=True, vertical_alignment="center", gap="large")
+    head.metric(f"{coin(sym)} / USDT", f"${price_text(t['last'])}", f"{(t.get('percentage') or 0) / 100:+.2%} 24h",
+                width="content")
+    for label, value in (("24h high", f"${price_text(t['high'])}"), ("24h low", f"${price_text(t['low'])}"),
+                         ("24h volume", usd(t.get("quoteVolume")))):
+        head.markdown(f":gray[{label}]  \n**{value}**", width="content")
 
 
 def alt_card(row):
@@ -1280,10 +1365,12 @@ def alt_scan_table():
         .map(lambda x: f"color: {UP}" if isinstance(x, float) and x > 0 else
              f"color: {DOWN}" if isinstance(x, float) and x < 0 else "", subset=["24h", "30d", "90d"])
         .map(lambda x: f"color: {UP}" if str(x).startswith("▲") else f"color: {DOWN}", subset=["Trend rule"]),
-        hide_index=True, width="stretch", alt="Most volatile liquid altcoins on Binance")
+        hide_index=True, width="stretch", alt="Most volatile liquid altcoins on Binance",
+        on_select=_pick_from_table, selection_mode="single-row", key="alt_scan_sel")
+    st.session_state["_alt_scan_symbols"] = list(s["symbol"])
     st.caption(f"Altcoins trading at least {usd(altcoins.MIN_VOLUME)} a day on Binance, ranked by their typical "
                "daily move over 30 days (BTC moves about 2% a day). Coins that just doubled usually give much of it "
-               "back. Refreshed every 30 minutes.")
+               "back. Refreshed every 30 minutes. Click a row to open its chart above.")
 
 
 def page_alt_learnt():
@@ -1311,6 +1398,46 @@ def page_alt_learnt():
                  hide_index=True, width="stretch", alt="Trend rule on wider coin lists")
     st.caption("Sharpe: return per unit of risk (higher is better). AUC: 0.5 is a coin flip. Details in "
                "experiments/altcoins_near_zec.py and experiments/trend_universe.py.")
+
+
+def page_patterns():
+    st.title("Patterns the AI learnt")
+    ex = explain.load()
+    if ex is None:
+        st.info("Not computed yet. It refreshes after each daily close, or run `python -m cryptoai explain`.")
+        return
+    st.caption(f"For the next-1-day model. A copy was trained only on data before {ex['holdout_from'][:10]} and is "
+               f"judged here on the {ex['holdout_rows']:,} candles after it, so every number below comes from data "
+               f"the model never learnt from. Updated {ex['computed'][:16].replace('T', ' ')} UTC.")
+    cards = st.container(horizontal=True, gap="medium")
+    cards.metric("Accuracy on unseen data (AUC)", f"{ex['holdout_auc']:.3f}", border=True,
+                 help="0.5 is a coin flip. Small but real: the AI ranks rising candles above falling ones a bit "
+                      "more often than chance.")
+    cards.metric("Candles that rose over the next day", f"{ex['base_rate']:.0%}", border=True)
+
+    st.subheader("What the AI relies on")
+    rel = pd.DataFrame(ex["reliance"])
+    rel["Accuracy lost when shuffled"] = rel["auc_drop"]
+    st.bar_chart(rel, x="group", y="Accuracy lost when shuffled", horizontal=True, sort="-Accuracy lost when shuffled",
+                 x_label="AUC lost when this kind of pattern is shuffled", y_label="", color=BLUE,
+                 alt="How much the AI relies on each kind of pattern")
+    st.caption("Each kind of pattern is scrambled in turn; the bigger the loss in accuracy, the more the AI leans on "
+               "it. Zero or below means the AI gets nothing from it on new data.")
+
+    st.subheader("What the patterns show")
+    st.caption("For the single inputs the AI relies on most: the unseen candles split into fifths by that input "
+               "(lowest to highest), or by day/hour. Blue: how often the AI expected a rise. Grey: how often the "
+               "price really rose. When the bars agree and slope the same way, the pattern held.")
+    for p in ex["patterns"]:
+        with st.container(border=True):
+            st.markdown(f"**{p['label'][:1].upper() + p['label'][1:]}** · :gray[{p['group']}]")
+            st.caption(explain.sentence(p))
+            b = pd.DataFrame(p["buckets"])
+            chart = pd.DataFrame({"bucket": b["bucket"], "AI expected a rise": b["ai_p_up"],
+                                  "Price really rose": b["actual_up"]})
+            st.bar_chart(chart, x="bucket", y=["AI expected a rise", "Price really rose"], color=[BLUE, GREY],
+                         stack=False, sort=False, height=220, x_label="", y_label="Share of candles",
+                         alt=f"Expected vs real rises by {p['label']}")
 
 
 def page_strategy_lab():
@@ -1353,6 +1480,7 @@ pages = {
         st.Page(page_alt_learnt, title="What the AI learnt", icon=":material/school:", url_path="altcoins-learnt"),
     ],
     "Research": [
+        st.Page(page_patterns, title="Patterns the AI learnt", icon=":material/psychology:", url_path="patterns"),
         st.Page(page_strategy_lab, title="Strategy lab", icon=":material/biotech:", url_path="strategy-lab"),
     ],
 }
