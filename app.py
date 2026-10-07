@@ -182,6 +182,9 @@ COLUMN_HELP = {
     "vs 200-day": "How far the daily close is above (+) or below (-) its 200-day average.",
     "AI next 1 day": "The AI's call and chance of a rise over the next day (next-1-day model).",
     "AI: P(up, 5 days)": "The stock AI's chance the price is higher 5 trading days from now. Weak: see Stock signals.",
+    "AI now: P(up, 5 days)": "The stock AI's chance of a rise over 5 trading days, re-read every minute on the live "
+                             "price (provisional until the US close). Weak: see the note above.",
+    "AI at last close": "The confirmed reading from the last US close.",
     "New signal": "The signal the model switched to.",
     "Prediction": "Which model: next 4 hours, next 1 day or next 3 days.",
     "P(up)": "The model's chance the price is higher at the end of its window.",
@@ -1844,6 +1847,26 @@ def page_stock_signals():
     market_monitor()
     stock_news()
     st.subheader("Every stock")
+    every_stock_table(a, ai)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_stock_live_ai(prices, version):
+    return stockai.live_readings(dict(prices))
+
+
+@st.fragment(run_every=60)
+def every_stock_table(a, ai):
+    """Each stock's trends and the stock AI's reading, on the live Binance price (a provisional close for today)."""
+    try:
+        live = get_stock_prices()
+    except Exception:
+        live = {}
+    prices = {t: v[0] for t, v in live.items()}
+    try:
+        live_ai = get_stock_live_ai(tuple(sorted(prices.items())), stock_data_version()) if prices else {}
+    except Exception:
+        live_ai = {}
     if ai is None:
         st.info("The stock AI hasn't run yet. It retrains every day after the US close, or run "
                 "`python -m cryptoai stock-ai`.")
@@ -1860,23 +1883,32 @@ def page_stock_signals():
                        f"the trend columns and holding matter more. Updated {when(ai['computed'])}.")
     rows = []
     for _, r in a.iterrows():
-        p = sig.get(r["ticker"], {}).get("p_up_5d")
-        rows.append({"Stock": f"{r['ticker']} · {r['name']}", "Long-term trend": "▲ above 200-day" if r["above_200d"]
-                     else "▼ below 200-day", "vs 200-day": r["from_200d"],
-                     "Short-term trend": "▲ above 50-day" if r["above_50d"] else "▼ below 50-day",
-                     "AI: P(up, 5 days)": p, "1 month": r["1m"], "Typical yearly swing": r["vol"]})
+        t = r["ticker"]
+        c = stocks.history(t)
+        px = prices.get(t, float(c.iloc[-1]))
+        recent = pd.concat([c.tail(199), pd.Series([px])]) if t in prices else c.tail(200)
+        avg200, avg50 = recent.mean(), recent.tail(50).mean()
+        rows.append({"Stock": f"{t} · {r['name']}", "Price now": px,
+                     "Long-term trend": "▲ above 200-day" if px > avg200 else "▼ below 200-day", "vs 200-day": px / avg200 - 1,
+                     "Short-term trend": "▲ above 50-day" if px > avg50 else "▼ below 50-day",
+                     "AI now: P(up, 5 days)": live_ai.get(t), "AI at last close": sig.get(t, {}).get("p_up_5d"),
+                     "1 month": px / float(c.iloc[-21]) - 1, "Typical yearly swing": r["vol"]})
     df = pd.DataFrame(rows)
     table(
         df.style.format({"vs 200-day": "{:+.1%}", "1 month": "{:+.1%}", "Typical yearly swing": "{:.0%}",
-                         "AI: P(up, 5 days)": "{:.0%}"}, na_rep="–")
+                         "AI now: P(up, 5 days)": "{:.0%}", "AI at last close": "{:.0%}", "Price now": "${:,.2f}"},
+                        na_rep="–")
         .map(lambda x: f"color: {UP}" if str(x).startswith("▲") else f"color: {DOWN}" if str(x).startswith("▼") else "",
              subset=["Long-term trend", "Short-term trend"])
         .map(lambda x: f"color: {UP}" if isinstance(x, float) and x > 0 else f"color: {DOWN}"
              if isinstance(x, float) and x < 0 else "", subset=["vs 200-day", "1 month"]),
         hide_index=True, width="stretch", alt="Trend and AI signal for each US stock",
-        column_config={"AI: P(up, 5 days)": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1)})
-    st.caption("For stocks, testing found holding beat every trading rule (Stock backtest). Use these to decide what "
-               "to buy and when to add in steps, not to jump in and out.")
+        column_config={"AI now: P(up, 5 days)": st.column_config.ProgressColumn(format="percent", min_value=0,
+                                                                                 max_value=1)})
+    st.caption("Live: trends and 'AI now' use the current Binance price as a provisional close for today, refreshed "
+               "every minute (like crypto's 'Live now'); 'AI at last close' is the confirmed reading, updated at each "
+               "US close. For stocks, testing found holding beat every trading rule, so use these to choose what to "
+               "buy and when to add in steps, not to jump in and out.")
 
 
 @st.fragment(run_every=60)

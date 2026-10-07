@@ -131,6 +131,39 @@ def train_and_test():
     return result
 
 
+def live_readings(prices):
+    """Provisional P(up, 5 days) per stock on the live price (Binance perpetual): today's daily candle is treated
+    as if it closed now (open = last close, close = live price), then the saved model reads it. Like the crypto
+    'Live now' readings: it shows where the signal is heading; the confirmed one updates at the US close."""
+    bundle = joblib.load(MODEL_FILE) if MODEL_FILE.exists() else None
+    if bundle is None:
+        return {}
+    today = pd.Timestamp.now(tz="America/New_York").normalize().tz_convert("UTC").normalize()
+    raw = {}
+    for t in stocks.STOCKS:
+        c = stocks.candles(t).copy()
+        px = prices.get(t)
+        if px and c.index[-1] < today:
+            last = float(c["close"].iloc[-1])
+            c.loc[today] = {"open": last, "high": max(last, px), "low": min(last, px), "close": px,
+                            "volume": float(c["volume"].tail(20).mean())}
+        elif px:
+            c.loc[c.index[-1], "close"] = px
+        raw[t] = c
+    own = {t: features.build(df) for t, df in raw.items()}
+    mkt = own[MARKET][features.MARKET_COLS].add_prefix("spy_")
+    rank = pd.DataFrame({t: df["close"].pct_change(20) for t, df in raw.items()}).rank(axis=1, pct=True)
+    out = {}
+    for t, f in own.items():
+        f = f.join(mkt)
+        f["rel_spy_20"] = f["ret_24"] - f["spy_ret_24"]
+        f["rel_spy_5"] = f["ret_6"] - f["spy_ret_6"]
+        f["xs_rank_20"] = rank[t]
+        row = f.iloc[[-1]].reindex(columns=bundle["features"])
+        out[t] = float(bundle["model"].predict_proba(row)[:, 1][0])
+    return out
+
+
 def load():
     try:
         return json.loads(RESULTS.read_text())
