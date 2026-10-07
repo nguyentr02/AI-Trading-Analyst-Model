@@ -14,8 +14,11 @@ from . import config, data, droprisk, features, model
 
 # Altcoins with full history downloaded: the experimental AI reading and the altcoin paper trial use these.
 # NEAR and ZEC were tested (experiments/altcoins_near_zec.py); the others are large, liquid, long-listed alts.
-WATCH = ["NEAR/USDT", "ZEC/USDT", "XRP/USDT", "DOGE/USDT", "AVAX/USDT", "LINK/USDT"]
-COLORS = {"NEAR/USDT": "#00C08B", "ZEC/USDT": "#F4B728", "XRP/USDT": "#23292F", "DOGE/USDT": "#C2A633",
+# SUI was added on 2026-10-07 (the user runs a SUI/USDT grid bot); the altcoin paper trial keeps the six coins it
+# opened with (TRIAL), so its accounts stay comparable.
+TRIAL = ["NEAR/USDT", "ZEC/USDT", "XRP/USDT", "DOGE/USDT", "AVAX/USDT", "LINK/USDT"]
+WATCH = [*TRIAL, "SUI/USDT"]
+COLORS = {"SUI/USDT": "#4DA2FF", "NEAR/USDT": "#00C08B", "ZEC/USDT": "#F4B728", "XRP/USDT": "#23292F", "DOGE/USDT": "#C2A633",
           "AVAX/USDT": "#E84142", "LINK/USDT": "#2A5ADA"}
 SIGNALS_FILE = config.LOG_DIR / "alt_signals.json"
 MIN_VOLUME = 20e6  # USDT per day: below this, prices are easy to push around

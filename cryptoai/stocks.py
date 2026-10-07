@@ -246,6 +246,45 @@ def top_pick(buy):
     return None if inside.empty else inside.sort_values("vol").iloc[0]
 
 
+TOP_PICK_STATE = config.LOG_DIR / "top_pick.json"
+
+
+def last_review_day():
+    """The most recent monthly review that has happened: the last US close of the previous month, or this month's
+    if it has passed (New York dates)."""
+    now = pd.Timestamp.now(tz="America/New_York")
+    review = next_review()
+    if now >= review:
+        return review.normalize()
+    prev = (now - pd.offsets.MonthBegin(1)).normalize() - pd.Timedelta("1D")
+    while prev.dayofweek >= 5:
+        prev -= pd.Timedelta("1D")
+    return prev
+
+
+def held_top_pick(buy):
+    """(held pick, today's best option). The pick is chosen at a monthly review and held until the next one
+    (switching daily or on chart breaks did worse: experiments/top_pick_events.py); the AI still checks every day
+    which stock would be best today, and reports it. Saved in logs/top_pick.json."""
+    import json
+    best = top_pick(buy)
+    try:
+        state = json.loads(TOP_PICK_STATE.read_text())
+    except (OSError, ValueError):
+        state = {}
+    review = str(last_review_day().date())
+    if best is not None and (state.get("review") != review or state.get("ticker") not in set(buy["ticker"])):
+        state = {"ticker": best["ticker"], "review": review, "chosen": pd.Timestamp.now(tz="UTC").isoformat(timespec="seconds"),
+                 "price": float(best["price"])}
+        with config.atomic(TOP_PICK_STATE) as tmp:
+            tmp.write_text(json.dumps(state, indent=1))
+    held = buy[buy["ticker"] == state.get("ticker")]
+    return (held.iloc[0] if len(held) else best), best, state
+
+
+NEWS_WARNING, NEWS_MIN_HEADLINES = -0.30, 5
+
+
 TOP_PICK_RECORD = {"pick_2122": 0.05, "list_2122": -0.16, "pick_2326": 1.72, "list_2326": 9.21,
                    "pick_worst": -0.32, "list_worst": -0.44}
 

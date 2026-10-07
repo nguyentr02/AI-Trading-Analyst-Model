@@ -30,7 +30,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0"}
 CRYPTO_FEEDS = ["https://www.coindesk.com/arc/outboundfeeds/rss/", "https://cointelegraph.com/rss"]
 COIN_QUERIES = {"BTC/USDT": "Bitcoin", "ETH/USDT": "Ethereum", "BNB/USDT": "BNB Binance coin", "SOL/USDT": "Solana",
                 "NEAR/USDT": "NEAR Protocol", "ZEC/USDT": "Zcash", "XRP/USDT": "XRP Ripple", "DOGE/USDT": "Dogecoin",
-                "AVAX/USDT": "Avalanche AVAX", "LINK/USDT": "Chainlink"}
+                "AVAX/USDT": "Avalanche AVAX", "LINK/USDT": "Chainlink", "SUI/USDT": "Sui SUI"}
 COIN_WORDS = {"BTC/USDT": ["bitcoin", "btc"], "ETH/USDT": ["ethereum", "ether", "eth"], "BNB/USDT": ["bnb", "binance"],
               "SOL/USDT": ["solana", "sol"]}
 FINANCE_WORDS = {  # added to VADER's lexicon (its scale is about -4..+4)

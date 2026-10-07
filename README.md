@@ -128,16 +128,16 @@ offline again, run the setup command from step 2 without `-Online`.
 | Page | What you see |
 |---|---|
 | **Market** | Live prices updating every second, 24h change, high/low, volume, market cap, supply, all-time high, and whale activity (big trades, liquidations, open interest) |
-| **Signals** | The crypto **Fear & Greed Index** (market mood), and each coin's **news mood** over 24 hours with its latest headlines. For each coin and window: **potential growth**, **potential decline** or no clear direction, and **how much** (the average move and typical range that really followed similar readings in 2022-2026), plus drop risk and a log of recent changes. The badge at the top shows whether the live learning service is running. Recompute the "how much" numbers with `python -m cryptoai outlook` |
+| **Signals** | The **AI verdict** for the top coins (buy in steps while coins are above their 50-day average, don't buy when none is) with what to sell from your portfolio (coins below their average, or a High drop warning), and the **AI's top pick** (the best 90-day climber, reviewed monthly, with a daily check and a news warning); the crypto **Fear & Greed Index** (market mood), and each coin's **news mood** over 24 hours with its latest headlines. For each coin and window: **potential growth**, **potential decline** or no clear direction, and **how much** (the average move and typical range that really followed similar readings in 2022-2026), plus drop risk and a log of recent changes. The badge at the top shows whether the live learning service is running. Recompute the "how much" numbers with `python -m cryptoai outlook` |
 | **Chart** | Candlestick chart with the model's P(up) underneath |
 | **Backtest** | How the strategy would have done on data the model had not seen, model accuracy, **Learning history**, and a **Retrain models** button |
 | **Portfolio** | AI advice (buy / sell / hold, with amounts) for your holdings and spare cash, plus value, profit/loss and allocation |
 | **Paper trading** | The 4-week trial: five pretend accounts trading live, balances, profit split into realised and unrealised, fees, result vs buy & hold, wallets and trade history |
-| **Altcoins → Altcoin market** | Experimental: trend status, AI P(up) and drop risk for NEAR, ZEC, XRP, DOGE, AVAX and LINK, and the most volatile liquid altcoins on Binance |
-| **Altcoins → Altcoin paper trading** | A separate 4-week trial of the same five accounts on those six altcoins |
+| **Altcoins → Altcoin market** | The same verdict and top pick for the altcoins; **your grid bots** (where the price is against each bot's range, and its exact settings replayed on recent 15-minute candles); experimental trend status, AI P(up) and drop risk for NEAR, ZEC, XRP, DOGE, AVAX, LINK and SUI, and the most volatile liquid altcoins on Binance |
+| **Altcoins → Altcoin paper trading** | A separate 4-week trial of the same five accounts on six altcoins (NEAR, ZEC, XRP, DOGE, AVAX, LINK; SUI was added to the watch list after the trial opened) |
 | **Altcoins → What the AI learnt** | What testing found about altcoins |
 | **US stocks → Stock market** | 17 US stocks and ETFs listed on Binance (Nvidia, Apple, Microsoft, Uber, SPY, QQQ, ...): live Binance prices and charts, trend and risk, and whether trading them with trend rules beat simply holding (tested on 10 years of Yahoo history) |
-| **US stocks → Stock signals** | Each stock's **news mood** over 24 hours with its latest headline; **Buy for hold now**: the tested list (an equal share of every stock above its 200-day average, reviewed monthly) on live prices; the **US market crash monitor**; and each stock's trend and the stock AI's 5-day chance of a rise |
+| **US stocks → Stock signals** | The **AI verdict** (buy in steps, or don't buy now when no stock is in an uptrend) and what to sell or trim in your stocks; the **AI's top pick** with its daily check and a news warning; each stock's **news mood** over 24 hours with its latest headline; **Buy for hold now**: the tested list (an equal share of every stock above its 200-day average, reviewed monthly) on live prices; the **US market crash monitor**; and each stock's trend and the stock AI's 5-day chance of a rise |
 | **US stocks → Stock backtest** | Any stock: holding vs a 50/100/200-day trend rule over 10 years, and how trading on the stock AI did |
 | **US stocks → Stock portfolio** | Enter your stocks and spare cash for hold-first advice: flags one stock above 25% of your stock money, notes trend and worst historical fall, and plans cash in 4 weekly steps |
 | **US stocks → Stock paper trading** | A 4-week trial: hold all, all in QQQ, buy in 4 weekly steps, the 200-day rule and the AI risk filter, at Binance stock prices |
@@ -262,6 +262,31 @@ The **Market** page shows the last hour (whale buys minus sells, open interest c
 events. These alerts are information only; nothing trades on them. Research and our own test found whale data
 mostly signals that a big move is coming, not which way (see `docs/research/whale-tracking.md`). To turn them
 off, set `"whales": false` in `notify.json`. Every event is saved to `logs\whale_events.csv`.
+
+### Grid bot alerts
+
+If you run a spot grid bot on Binance, put its settings in `grid_bots.json` (kept off GitHub) or edit them on
+**Altcoins → Altcoin market → Edit settings**:
+
+```json
+{"bots": [{"symbol": "SUI/USDT", "lower": 1.1608, "upper": 1.2608, "grids": 13, "type": "arithmetic", "invest": 1000}]}
+```
+
+Every minute the live service checks the price against each bot's range and alerts you (Windows and Zalo) when it
+leaves the range, comes near an edge, or comes back. Below the range the bot has bought at every level and just
+holds the coin; above it, it has sold everything. Nothing here changes the bot on Binance.
+
+It also tells you when to **change the bot** (shown on the page and sent as an alert, repeated daily while it
+applies):
+
+| Suggestion | When |
+|---|---|
+| **New range** | The price has been below the range (or above it, without trailing up) for 12 hours; suggests a range from the last 7 days' low and high plus 3%, with grids about 1% apart (a rule of thumb, not a tested setting) |
+| **Downtrend** | The coin's daily close falls below its 50-day average, where the tested trend rule holds cash |
+| **Drop warning High** | The AI's drop warning is High; suggests a stop loss if the bot has none |
+| **Grids too close** | A grid would earn less than 0.2% per round trip after fees |
+
+When you change the bot on Binance, change its settings on the page too, so the alerts match it.
 
 ### US stocks
 

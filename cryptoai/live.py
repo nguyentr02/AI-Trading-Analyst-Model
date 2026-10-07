@@ -22,7 +22,7 @@ import pandas as pd
 import requests
 from websockets.sync.client import connect
 
-from . import (advisor, altcoins, config, droprisk, explain, model, news, notify, paper, preview, signals, stockai,
+from . import (advisor, altcoins, config, cryptopick, droprisk, explain, gridbot, model, news, notify, paper, preview, signals, stockai,
                stockpaper, stocks, whales)
 
 STREAM_URL = "wss://stream.binance.com:9443/stream?streams="
@@ -196,7 +196,7 @@ class LiveService:
                 if not paper.is_open(book):
                     continue
                 readings = live_now if book is paper.MAIN else preview.compute(
-                    extra=book.symbols, path=preview.ALT_PREVIEW)
+                    extra=tuple(altcoins.WATCH), path=preview.ALT_PREVIEW)
                 done = paper.step_ai_live(readings, book=book)
                 shock = paper.step_shock(book=book)
                 done = pd.concat([d for d in (done, shock) if len(d)]) if len(done) or len(shock) else done
@@ -206,6 +206,7 @@ class LiveService:
                         f"(${r.total:,.2f}) - {r.reason}")
             self.stock_close()
             self.market_crash_check()
+            self.grid_check()
             hour = time.strftime("%Y%m%d%H", time.gmtime())
             if hour != self._paper_hour:  # balance history: one point an hour
                 self._paper_hour = hour
@@ -224,7 +225,8 @@ class LiveService:
             self._preview_failing = True
 
     def stock_jobs(self):
-        """Hourly: the stock paper trial's balance point and weekly updates."""
+        """Hourly: the stock paper trial's balance point and weekly updates, and a news check on the top pick."""
+        self.top_pick_news()
         try:
             if stockpaper.is_open():
                 stockpaper.snapshot()
@@ -233,6 +235,67 @@ class LiveService:
                     log(f"    STOCKS: {news}")
         except Exception:
             log(f"stock snapshot failed:\n{traceback.format_exc()}")
+
+    def top_pick_news(self):
+        """Alert once a day if the AI's top stock pick has clearly negative news (stocks.NEWS_WARNING)."""
+        try:
+            state = json.loads(stocks.TOP_PICK_STATE.read_text())
+        except (OSError, ValueError):
+            return
+        t, today = state.get("ticker"), time.strftime("%Y-%m-%d", time.gmtime())
+        if not t or state.get("news_alert_day") == today:
+            return
+        try:
+            df = news.headlines(tickers_stock=[t])[t]
+            m, n = news.mood(df)
+            if n >= stocks.NEWS_MIN_HEADLINES and m <= stocks.NEWS_WARNING:
+                top = "\n".join(f"- {r.title}" for r in df.head(3).itertuples())
+                notify.send(f"News warning: top pick {t}", f"News mood {m:+.2f} over {n} headlines today:\n{top}\n"
+                            "Read it before buying. The pick does not change on news alone (not testable on past data).")
+                log(f"    NEWS WARNING: top pick {t}, mood {m:+.2f} ({n} headlines)")
+                state["news_alert_day"] = today
+                with config.atomic(stocks.TOP_PICK_STATE) as tmp:
+                    tmp.write_text(json.dumps(state, indent=1))
+        except Exception as e:
+            log(f"top pick news check failed ({type(e).__name__}: {e})")
+        self.crypto_pick_news()
+
+    def crypto_pick_news(self):
+        """Hourly: refresh the crypto top picks (top coins, altcoins; re-picked at the monthly review or when the
+        pick falls below its 50-day average) and alert once a day on clearly negative news for a pick."""
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        for group, symbols in (("main", config.SYMBOLS), ("alts", altcoins.WATCH)):
+            try:
+                pick, _, state = cryptopick.held_top_pick(group, cryptopick.trend_table(symbols))
+                if pick is None or state.get("news_alert_day") == today:
+                    continue
+                s = pick["symbol"]
+                df = news.headlines(symbols_crypto=[s])[s]
+                m, n = news.mood(df)
+                if n >= stocks.NEWS_MIN_HEADLINES and m <= stocks.NEWS_WARNING:
+                    top = "\n".join(f"- {r.title}" for r in df.head(3).itertuples())
+                    notify.send(f"News warning: crypto top pick {s.split('/')[0]}",
+                                f"News mood {m:+.2f} over {n} headlines today:\n{top}\nRead it before buying. The "
+                                "pick does not change on news alone (not testable on past data).")
+                    log(f"    NEWS WARNING: crypto top pick {s}, mood {m:+.2f} ({n} headlines)")
+                    all_state = json.loads(cryptopick.STATE.read_text())
+                    all_state[group]["news_alert_day"] = today
+                    with config.atomic(cryptopick.STATE) as tmp:
+                        tmp.write_text(json.dumps(all_state, indent=1))
+            except Exception as e:
+                log(f"crypto top pick news check failed ({group}: {type(e).__name__}: {e})")
+
+    def grid_check(self):
+        """Every minute: alert when one of the user's grid bots (grid_bots.json) leaves its price range."""
+        try:
+            for m in gridbot.check(lambda title, body: notify.send(title, body)):
+                log(f"    GRID BOT: {m}")
+        except Exception as e:
+            if not getattr(self, "_grid_failing", False):
+                log(f"grid bot check failed ({type(e).__name__}: {e}); will keep trying")
+            self._grid_failing = True
+            return
+        self._grid_failing = False
 
     def market_crash_check(self):
         """Every minute: the US market crash monitor on the live S&P 500 price (Binance SPY perpetual)."""

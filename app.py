@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from cryptoai import (advisor, altcoins, auth, backtest, config, data, droprisk, explain, live, market, metrics, model,
+from cryptoai import (advisor, altcoins, auth, backtest, config, cryptopick, data, droprisk, explain, gridbot, live, market, metrics, model,
                       news, notify, outlook, paper, portfolio, preview, research_log, signals, stockai, stockpaper, stocks,
                       whales)
 
@@ -577,7 +577,78 @@ def page_signals():
     st.title("Signals")
     service_badge()
     market_mood()
+    crypto_stance("main", tuple(config.SYMBOLS))
     signal_board()
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def get_crypto_prices(symbols):
+    return data.prices(list(symbols))
+
+
+@st.fragment(run_every=60)
+def crypto_stance(group, symbols):
+    """The AI's verdict for crypto right now (the tested 50-day rule), the held top pick with its daily check and
+    news warning, and what to sell from your portfolio. Crypto version of stock_stance."""
+    try:
+        live_px = get_crypto_prices(symbols)
+    except Exception:
+        live_px = {}
+    t = cryptopick.trend_table(symbols, live_px)
+    if not len(t):
+        return
+    names = ", ".join(coin(x) for x in t.loc[t["in"], "symbol"])
+    what = "top coins" if group == "main" else "altcoins"
+    if not t["in"].any():
+        st.error(f"**AI verdict: don't buy {what} now.** None is above its 50-day average, so the tested rule holds "
+                 "cash until one is again.", icon=":material/do_not_disturb_on:")
+    else:
+        st.success(f"**AI verdict: buy in steps.** {int(t['in'].sum())} of {len(t)} are in an uptrend (above their "
+                   f"50-day average): {names}. Sell one when its daily close falls below its average.",
+                   icon=":material/shopping_cart_checkout:")
+    try:
+        held = portfolio.load()
+    except Exception:
+        held = []
+    acts = cryptopick.portfolio_actions(held, t, live_px)
+    if acts:
+        st.warning("**Your portfolio:** " + "; ".join(f"{a} {coin(x)} ({why})" for x, a, why in acts)
+                   + ". Details on Portfolio.", icon=":material/account_balance_wallet:")
+    pick, best, _ = cryptopick.held_top_pick(group, t)
+    if pick is None:
+        return
+    rec = cryptopick.RECORD
+    with st.container(border=True):
+        line = st.container(horizontal=True, vertical_alignment="center", gap="small")
+        line.markdown(f"**AI's top pick: {coin(pick['symbol'])}** at {price_text(pick['price'])}", width="content")
+        line.badge("If you only buy one", icon=":material/star:", color="blue")
+        review = cryptopick.next_review()
+        if best is not None and best["symbol"] == pick["symbol"]:
+            st.caption(f":material/event_repeat: Daily check ({when(pd.Timestamp.now(tz='UTC'), '%b %d')}): "
+                       f"{coin(pick['symbol'])} is still the best option.")
+        elif best is not None:
+            st.caption(f":material/event_repeat: Daily check: today's best option would be **{coin(best['symbol'])}**. "
+                       f"The pick switches at the monthly review ({when(review, '%b %d')}), or earlier if it falls "
+                       "below its 50-day average.")
+        try:
+            pick_news = get_news(crypto=tuple(symbols)).get(pick["symbol"])
+        except Exception:
+            pick_news = None
+        if pick_news is not None:
+            m, k = news.mood(pick_news)
+            if k >= stocks.NEWS_MIN_HEADLINES and m <= stocks.NEWS_WARNING:
+                st.warning(f"Negative news for {coin(pick['symbol'])} in the last 24 hours (mood {m:+.2f}, {k} "
+                           "headlines). Read it before buying; news effects couldn't be tested on past data, so the "
+                           "pick does not change on its own.", icon=":material/newspaper:")
+                for r in pick_news.head(3).itertuples():
+                    st.markdown(f"- [{r.title}]({r.link}) ({r.score:+.2f})")
+        st.caption(f"The strongest 90-day climber ({pick['mom90']:+.0%}) among the coins above their 50-day average; "
+                   f"{pick['from_50d']:+.0%} above its sell-if-below line ({price_text(pick['ma50'])}). Of four ways "
+                   f"to pick one coin, this was best on 2022-2024, yet it trailed the 50-day rule on all coins "
+                   f"({rec['pick_2224']:+.0%} vs {rec['list_2224']:+.0%}); on 2025-2026 it made "
+                   f"{rec['pick_2526']:+.0%} vs {rec['list_2526']:+.0%}, but with a worst fall of "
+                   f"{rec['pick_worst']:.0%} vs {rec['list_worst']:.0%}. Spreading over all the coins above their "
+                   "average is the safer choice. The pick is reviewed monthly.")
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1516,6 +1587,8 @@ def page_altcoins():
     except Exception as e:
         st.error(f"Could not compute the readings: {e}")
         r = pd.DataFrame()
+    crypto_stance("alts", tuple(altcoins.WATCH))
+    grid_bots_panel()
     alt_chart_section(r)
 
     st.subheader("AI reading")
@@ -1529,6 +1602,88 @@ def page_altcoins():
                "Updated at every 4h close.")
     st.subheader("Biggest movers on Binance")
     alt_scan_table()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_grid_backtest(bot_json, version):
+    import json as _json
+    return gridbot.backtest(_json.loads(bot_json))
+
+
+@st.fragment(run_every=30)
+def grid_bots_panel():
+    """Your Binance grid bots (grid_bots.json): where the price is against the range, and how the exact settings
+    would have done lately. Read-only: nothing here changes the bot on Binance."""
+    import json as _json
+    bots = gridbot.load_bots()
+    if not bots:
+        return
+    for i, b in enumerate(bots):
+        sym = b["symbol"]
+        try:
+            px = float(get_crypto_prices((sym,))[sym])
+        except Exception:
+            continue
+        s = gridbot.status(b, px)
+        lo_p, hi_p = gridbot.profit_per_grid(b)
+        with st.container(border=True):
+            line = st.container(horizontal=True, vertical_alignment="center", gap="small")
+            line.markdown(f"**Your {coin(sym)} grid bot** · {b['lower']}–{b['upper']} · {b['grids']} grids "
+                          f"({b.get('type', 'arithmetic')})", width="content")
+            color = {"in range": "green", "below": "red", "above": "orange"}[s["where"]]
+            line.badge(s["where"] + (f", {s['near']}" if s.get("near") else ""), color=color)
+            msg = f"Price {price_text(px)}: {s['text']}."
+            (st.error if s["where"] == "below" else st.warning if s["where"] == "above" or s.get("near")
+             else st.info)(msg)
+            try:
+                gstate = _json.loads(gridbot.STATE_FILE.read_text()).get(f"{sym} {b['lower']}-{b['upper']}", {})
+                since = gstate.get("outside_since") if isinstance(gstate, dict) else None
+                hours = (pd.Timestamp.now(tz="UTC") - pd.Timestamp(since)).total_seconds() / 3600 if since else 0.0
+                for _, title, text in gridbot.advice(b, px, hours):
+                    st.warning(f"**{title.split(': ', 1)[-1].capitalize()}.** {text}", icon=":material/build:")
+            except Exception:
+                pass
+            reading = (altcoins.load() or {}).get("coins", {}).get(sym, {})
+            notes = [f"Each round trip earns {lo_p:.2%}–{hi_p:.2%} of one grid's money after Binance's 0.1% fees."]
+            if reading:
+                trend = "above" if reading["above"]["50"] else "below"
+                notes.append(f"{coin(sym)} is {reading['from_50d']:+.0%} from its 50-day average ({trend} it)"
+                             + (f"; drop warning {reading['p_drop']:.0%}" if reading.get("p_drop") is not None else "")
+                             + ".")
+                if abs(reading["from_50d"]) > 0.15:
+                    notes.append("A grid earns most when the price swings sideways inside the range; in a strong "
+                                 "trend like this the price tends to leave the range (below it the bot just holds the "
+                                 "coin, above it the bot holds only cash).")
+            st.caption(" ".join(notes))
+            try:
+                bt = get_grid_backtest(_json.dumps(b), data_version([gridbot.BOTS_FILE]))
+                table(bt.style.format({"Grid return": "{:+.1%}", "Grid profit only": "{:+.1%}",
+                                       "Hold the coin": "{:+.1%}", "Per day": "{:.1f}", "Time in range": "{:.0%}"}),
+                      hide_index=True, width="stretch", alt=f"{coin(sym)} grid replay")
+                st.caption("These exact settings replayed on Binance 15-minute candles over recent windows, after "
+                           "fees, starting at that window's price (like a new bot). *Grid return* = whole bot "
+                           "including price moves of the coin it holds; *Grid profit only* = Binance's 'grid "
+                           "profit'. Past windows only show how the range fits recent prices, not what comes next.")
+            except Exception as e:
+                st.caption(f"Replay unavailable: {e}")
+            with st.popover("Edit settings", icon=":material/tune:",
+                            help="Change these whenever you change the bot on Binance, so the alerts match it."):
+                with st.form(f"grid_{i}"):
+                    lo = st.number_input("Lower price", value=float(b["lower"]), format="%.4f", step=0.001)
+                    hi = st.number_input("Upper price", value=float(b["upper"]), format="%.4f", step=0.001)
+                    n = st.number_input("Number of grids", value=int(b["grids"]), min_value=2, max_value=300)
+                    kind = st.selectbox("Type", ["arithmetic", "geometric"],
+                                        index=0 if b.get("type", "arithmetic").startswith("ar") else 1)
+                    inv = st.number_input("Money in the bot (USDT, for the replay)", value=float(b.get("invest") or 1000),
+                                          min_value=10.0, step=50.0)
+                    stop = st.number_input("Stop loss price (0 = none)", value=float(b.get("stop_loss") or 0.0),
+                                           min_value=0.0, format="%.4f", step=0.001)
+                    trail = st.checkbox("Trailing up enabled", value=bool(b.get("trailing_up")))
+                    if st.form_submit_button("Save") and hi > lo:
+                        bots[i] = {**b, "lower": lo, "upper": hi, "grids": int(n), "type": kind, "invest": inv,
+                                   "stop_loss": stop or None, "trailing_up": trail}
+                        gridbot.save_bots(bots)
+                        st.rerun()
 
 
 @st.cache_data(ttl=5, show_spinner=False)
@@ -1662,7 +1817,7 @@ def page_alt_learnt():
         "- **More coins did not help the trend rule.** The most-traded alts each month are usually the ones in a "
         "hype cycle (LUNA before its crash, DOGE, PEPE), and the rule got whipsawed on them.\n"
         "- **Being tested live:** a separate 4-week paper trial runs the same five accounts on "
-        f"{', '.join(coin(s) for s in altcoins.WATCH)} (Altcoins → Paper trading).")
+        f"{', '.join(coin(s) for s in altcoins.TRIAL)} (Altcoins → Paper trading).")
     st.subheader("NEAR and ZEC, 2025-01 to 2026-10, $1000 each")
     st.caption("Tested on data the AI never trained on.")
     table(altcoins.NEAR_ZEC.style.format({"NEAR $": "${:,.0f}", "ZEC $": "${:,.0f}", "Sharpe (both)": "{:.2f}",
@@ -1911,6 +2066,44 @@ def every_stock_table(a, ai):
                "buy and when to add in steps, not to jump in and out.")
 
 
+def stock_stance(b):
+    """The AI's verdict for right now: buy (in steps), or don't buy, plus what to sell or trim in your stocks."""
+    n = int(b["in"].sum())
+    holdings, cash = stocks.load_portfolio()
+    sells = trims = []
+    if holdings:
+        try:
+            adv, _, _ = stocks.advise(holdings, cash, get_stock_analysis(stock_data_version()),
+                                      {t: v[0] for t, v in get_stock_prices().items()})
+            sells = list(adv.loc[adv["action"] == "SELL at review", "ticker"])
+            trims = list(adv.loc[adv["action"] == "TRIM", "ticker"])
+        except Exception:
+            pass
+    try:
+        mkt = stocks.market_status(get_stock_prices()["SPY"][0])
+    except Exception:
+        mkt = None
+    if n == 0:
+        st.error("**AI verdict: don't buy stocks now.** None of the stocks is above its 200-day average, so the tested "
+                 "rule holds cash until some are again.", icon=":material/do_not_disturb_on:")
+    else:
+        extra = ""
+        if mkt and mkt["level"] != "Normal":
+            extra = (f" The market is in a {mkt['level'].lower()} ({mkt['from_high']:+.0%} from its high): buying in "
+                     "steps matters more than usual. Selling everything at such points did not pay in testing.")
+        st.success(f"**AI verdict: buy in steps.** {n} stocks are in an uptrend (marked BUY below).{extra}",
+                   icon=":material/shopping_cart_checkout:")
+    if sells or trims:
+        parts = []
+        if sells:
+            parts.append(f"sell {', '.join(sells)} at the monthly review ({when(stocks.next_review().tz_convert('UTC'))}) "
+                         "if still below its 200-day average")
+        if trims:
+            parts.append(f"trim {', '.join(trims)} (more than {stocks.MAX_WEIGHT:.0%} of your stock money)")
+        st.warning("**Your portfolio:** " + "; ".join(parts) + ". Details on Stock portfolio.",
+                   icon=":material/account_balance_wallet:")
+
+
 @st.fragment(run_every=60)
 def stock_buy_list(a):
     """Live 'buy for hold' recommendation: the tested monthly uptrend rule on today's Binance prices."""
@@ -1922,7 +2115,8 @@ def stock_buy_list(a):
     b = stocks.buy_list(a, live)
     n = int(b["in"].sum())
     review = stocks.next_review().tz_convert("UTC")
-    pick = stocks.top_pick(b)
+    stock_stance(b)
+    pick, best, pick_state = stocks.held_top_pick(b)
     if pick is not None:
         rec = stocks.TOP_PICK_RECORD
         with st.container(border=True):
@@ -1930,6 +2124,25 @@ def stock_buy_list(a):
             line.markdown(f"**AI's top pick: {pick['ticker']} · {pick['name']}** at ${pick['price']:,.2f}",
                           width="content")
             line.badge("If you only buy one", icon=":material/star:", color="blue")
+            if best is not None and best["ticker"] == pick["ticker"]:
+                st.caption(f":material/event_repeat: Daily check ({when(pd.Timestamp.now(tz='UTC'), '%b %d')}): "
+                           f"{pick['ticker']} is still the best option.")
+            elif best is not None:
+                st.caption(f":material/event_repeat: Daily check: today's best option would be **{best['ticker']}**. The "
+                           f"pick switches at the monthly review ({when(review)}): switching daily did worse in testing "
+                           "(Sharpe 0.28 vs 0.41 on 2016-2022, 1.01 vs 1.16 on 2023-2026).")
+            try:
+                pick_news = get_news(stocks_=tuple(stocks.STOCKS)).get(pick["ticker"])
+            except Exception:
+                pick_news = None
+            if pick_news is not None:
+                m, k = news.mood(pick_news)
+                if k >= stocks.NEWS_MIN_HEADLINES and m <= stocks.NEWS_WARNING:
+                    st.warning(f"Negative news for {pick['ticker']} in the last 24 hours (mood {m:+.2f}, {k} headlines). "
+                               "Read it before buying; news can move the price, but its effect couldn't be tested on "
+                               "past data, so the pick does not change on its own.", icon=":material/newspaper:")
+                    for r in pick_news.head(3).itertuples():
+                        st.markdown(f"- [{r.title}]({r.link}) ({r.score:+.2f})")
             st.caption(f"The steadiest stock in the buy list: a typical yearly swing of {pick['vol']:.0%} and a worst "
                        f"fall of {pick['worst_10y']:.0%} in 10 years; {pick['from_200d']:+.0%} above its sell-if-below "
                        f"line (${pick['avg200']:,.2f}). Of four ways to pick one stock, this did best when tested on "

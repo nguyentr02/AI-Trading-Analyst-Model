@@ -2,7 +2,7 @@
 
 There are two separate books, each with its own coins, folder and trial dates:
 - MAIN  the live coins (config.SYMBOLS), saved in paper/
-- ALTS  altcoins (altcoins.WATCH), saved in paper_alts/. Same accounts and rules (AI Smart also acts on the live
+- ALTS  altcoins (altcoins.TRIAL), saved in paper_alts/. Same accounts and rules (AI Smart also acts on the live
         readings every minute, from 2026-10-06). Experimental: the AI was trained on the main coins and tested only
         on NEAR and ZEC (experiments/altcoins_near_zec.py).
 
@@ -79,7 +79,7 @@ class Book:
 
 
 MAIN = Book("main", "Top coins", config.ROOT / "paper", tuple(config.SYMBOLS), live=True)
-ALTS = Book("alts", "Altcoins", config.ROOT / "paper_alts", tuple(altcoins.WATCH), live=True)
+ALTS = Book("alts", "Altcoins", config.ROOT / "paper_alts", tuple(altcoins.TRIAL), live=True)
 BOOKS = (MAIN, ALTS)
 DIR, ACCOUNT, TRADES, BALANCE = MAIN.dir, MAIN.account, MAIN.trades, MAIN.balance  # older names
 
