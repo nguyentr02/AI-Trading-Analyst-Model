@@ -13,6 +13,8 @@ Benchmark: the whole buy-for-hold list, equal weight. 0.1% cost per side. Out-of
 Choice: the best Sharpe on 2021-2022. It is shown as the "AI's top pick" in the app regardless (the user asked for
 one pick), together with its record against the list; it is called better than the list only if it beat the list's
 Sharpe in both periods.
+Added 2026-10-07 (the user asked for a second and third choice): steadiest3, the 3 steadiest held in equal shares,
+reported against the same benchmark; not used to choose the rule.
 """
 import sys
 from pathlib import Path
@@ -60,12 +62,14 @@ def run(tab, closes, rule):
         if rule == "list":
             chosen = list(g["ticker"])
         else:
+            top = 3 if rule == "steadiest3" else 1
+            rule_ = "steadiest" if rule == "steadiest3" else rule
             col, asc = {"ai_5d": ("ai_5d", False), "potential": ("potential", False), "strongest": ("from_200d", False),
-                        "steadiest": ("vol", True)}[rule]
+                        "steadiest": ("vol", True)}[rule_]
             g = g.dropna(subset=[col])
             if g.empty:
                 continue
-            chosen = [g.sort_values(col, ascending=asc).iloc[0]["ticker"]]
+            chosen = list(g.sort_values(col, ascending=asc).iloc[:top]["ticker"])
             picks.append((m, chosen[0]))
         nxt = months[i + 1] if i + 1 < len(months) else closes.index[-1] + pd.Timedelta("1D")
         rows = (w.index > m) & (w.index <= nxt)
@@ -83,7 +87,7 @@ def stats(r):
 def main():
     tab, closes = month_end_table()
     rows, last = [], {}
-    for rule in ("list", "ai_5d", "potential", "strongest", "steadiest"):
+    for rule in ("list", "ai_5d", "potential", "strongest", "steadiest", "steadiest3"):
         r, picks = run(tab, closes, rule)
         last[rule] = picks[-3:]
         for label, (a, b) in PERIODS.items():

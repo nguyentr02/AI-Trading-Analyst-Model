@@ -2150,6 +2150,20 @@ def stock_buy_list(a):
                        f"market), but it lagged the whole list in 2023-2026 ({rec['pick_2326']:+.0%} vs "
                        f"{rec['list_2326']:+.0%}). No one-stock pick beat holding the whole list, so the list below is "
                        "still the better choice. The pick is reviewed monthly with the list.")
+            more = stocks.runner_ups(b, pick["ticker"])
+            if len(more):
+                t3 = stocks.TOP3_RECORD
+                for rank, r in zip(("2nd", "3rd"), more.itertuples()):
+                    close = " · close to its sell line" if r.from_200d < 0.05 else ""
+                    st.markdown(f"**{rank} choice: {r.ticker} · {r.name}** at ${r.price:,.2f} · typical yearly swing "
+                                f"{r.vol:.0%} · {r.from_200d:+.0%} above its sell-if-below line (${r.avg200:,.2f})"
+                                f"{close}")
+                st.caption(f"The next steadiest stocks in the buy list. The top 3 held in equal shares: "
+                           f"{t3['top3_2122']:+.0%} in 2021-2022 (the whole list {rec['list_2122']:+.0%}) and "
+                           f"{t3['top3_2326']:+.0%} in 2023-2026 (the whole list {rec['list_2326']:+.0%}), worst "
+                           f"fall {t3['top3_worst']:.0%}. Better than the top pick alone in 2023-2026, worse in the 2021-2022 "
+                           "bear market; the whole list still did best over both. A choice close to its sell line may leave the list at the next "
+                           "review.")
     _, saved_cash = stocks.load_portfolio()
     budget = st.number_input("How much do you want to invest? (USD)", min_value=0.0, step=100.0,
                              value=float(saved_cash) if saved_cash >= 100 else 1000.0, key="buy_budget")

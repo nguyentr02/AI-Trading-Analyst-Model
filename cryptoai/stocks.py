@@ -246,6 +246,15 @@ def top_pick(buy):
     return None if inside.empty else inside.sort_values("vol").iloc[0]
 
 
+def runner_ups(buy, held, n=2):
+    """The next steadiest stocks in the buy list after the held top pick: the second and third choice."""
+    inside = buy[buy["in"] & (buy["ticker"] != held)]
+    return inside.sort_values("vol").head(n)
+
+
+# The 3 steadiest in equal shares (experiments/stock_top_pick.py, added 2026-10-07, not used to choose the rule).
+TOP3_RECORD = {"top3_2122": -0.08, "top3_2326": 2.92, "top3_worst": -0.39}
+
 TOP_PICK_STATE = config.LOG_DIR / "top_pick.json"
 
 

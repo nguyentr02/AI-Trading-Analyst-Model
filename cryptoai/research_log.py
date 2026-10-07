@@ -105,6 +105,9 @@ LOG = pd.DataFrame([
      "50-day average or drops 8%", "All worse than the monthly review in 2016-2022 (Sharpe 0.17-0.40 vs 0.41); daily "
      "0.28 / 1.01 vs 0.41 / 1.16. Daily check shown, pick held to the review", NOT_ADOPTED,
      "experiments/top_pick_events.py"),
+    ("2026-10-07", "US stocks", "Top 3 steadiest stocks in equal shares (a second and third choice after the top "
+     "pick)", "2021-2022 -8% vs -16% for the whole list; 2023-2026 +292% vs +922% (Sharpe 1.66 vs 2.05), worst fall "
+     "-39%. Shown as 2nd and 3rd choice; the whole list is still better", PARTLY, "experiments/stock_top_pick.py"),
     ("2026-10-07", "Crypto", "One top coin a month among the 10 coins above their 50-day average (steadiest, "
      "strongest, best 90-day return, or Bitcoin first)", "Best 90-day return chosen on 2022-2024 (+107% vs +118% for "
      "the 50-day rule on all 10 coins, Sharpe 0.71 vs 0.86); 2025-2026 +325% vs +72% but worst fall -70% vs -24%. "
