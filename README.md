@@ -198,8 +198,20 @@ The live service stays connected to Binance. Each time a candle closes it:
    (otherwise it keeps the previous model),
 4. logs the new signals.
 
-If the PC was off or the internet was down, it downloads everything it missed when it comes back and learns
-from it before continuing. Nothing is skipped.
+If the PC was off or the internet was down, it catches up on everything it missed as soon as it is back:
+
+- **Data:** every missed crypto candle (4h, 1d, 15m, 1h, for the main coins and the altcoins) and the latest stock
+  history.
+- **Learning:** all crypto models, the drop warning and the patterns page retrain on the missed candles; the stock
+  AI retrains if a US close was missed.
+- **Website:** the paper trials' balance charts get an hourly point for every missed hour, rebuilt from the
+  holdings at that hour (replayed from the trade log) and real hourly closes, so the charts have no gaps.
+- **Decisions:** the paper trials decide straight away at the current price. A US close missed while offline is
+  handled at once, and its trades are labelled "late: the service was offline at the US close". Trades are never
+  invented at past prices: nothing traded while the service was off.
+
+Not recoverable: liquidations and whale trades that happened while offline (Binance offers no free history of the
+liquidation stream), and the minute-by-minute live readings.
 
 ### Advice for your portfolio
 

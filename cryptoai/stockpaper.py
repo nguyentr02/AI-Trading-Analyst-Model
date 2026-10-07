@@ -112,8 +112,32 @@ def _sell_all(acct, account, t, price, reason):
     return True
 
 
-def step(force=False):
-    """Once a day after the US close: weekly DCA buys, and the trend / AI accounts' in-or-out decisions."""
+def backfill_balance():
+    """After downtime: add the missing hourly balance points from Binance's hourly stock-perpetual closes (holdings
+    did not change while the service was off). Call before any catch-up trades. Returns rows added."""
+    from . import data, paper
+    acct = load()
+    hist = balance_history()
+    if acct is None or hist.empty:
+        return 0
+    end = min(pd.Timestamp.now(tz="UTC"), pd.Timestamp(acct["ends"]))
+
+    def price_at(symbols, hours):
+        out = {}
+        for t in symbols:
+            k = data.exchange().fetch_ohlcv(stocks.perp(t), "1h",
+                                            since=int((hours[0] - pd.Timedelta("2h")).timestamp() * 1000), limit=1000)
+            c = pd.Series([x[4] for x in k], index=pd.to_datetime([x[0] for x in k], unit="ms", utc=True) + pd.Timedelta("1h"))
+            out[t] = c.reindex(hours, method="ffill")
+        return pd.DataFrame(out, index=hours)
+
+    accounts = {a: [*PICKS, "QQQ"] for a in acct["accounts"]}
+    return paper.fill_gaps(BALANCE, hist, trades(), accounts, acct["start_cash"], False, end, price_at)
+
+
+def step(force=False, note=""):
+    """Once a day after the US close: weekly DCA buys, and the trend / AI accounts' in-or-out decisions.
+    `note` is added to every trade reason (e.g. for a late decision after downtime)."""
     acct = load()
     if not active(acct):
         return 0
@@ -128,7 +152,7 @@ def step(force=False):
     weeks = int((pd.Timestamp.now(tz="UTC") - pd.Timestamp(acct["opened"])) / pd.Timedelta("7D"))
     while acct["dca_done"] < DCA_STEPS and acct["dca_done"] <= weeks:
         for t in PICKS:
-            _buy(acct, "dca", t, sleeve / DCA_STEPS, prices[t], f"buy step {acct['dca_done'] + 1} of {DCA_STEPS}")
+            _buy(acct, "dca", t, sleeve / DCA_STEPS, prices[t], f"buy step {acct['dca_done'] + 1} of {DCA_STEPS}{note}")
         acct["dca_done"] += 1
     for t in PICKS:
         c = stocks.history(t)
@@ -139,9 +163,9 @@ def step(force=False):
                 ("ai_gate", p is None or p >= 0.45, f"AI P(up, 5 days) {p:.0%}" if p is not None else "no AI reading")):
             holding = acct["accounts"][account]["qty"].get(t, 0.0) > 0
             if want and not holding:
-                _buy(acct, account, t, sleeve, prices[t], why)
+                _buy(acct, account, t, sleeve, prices[t], why + note)
             elif not want and holding:
-                _sell_all(acct, account, t, prices[t], why)
+                _sell_all(acct, account, t, prices[t], why + note)
     # The buy-for-hold list: rebalance at the start and at each month's last US close.
     ny_today = pd.Timestamp.now(tz="America/New_York").normalize()
     if acct.get("buylist_review") is None or stocks.next_review().normalize() == ny_today:

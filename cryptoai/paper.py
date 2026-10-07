@@ -408,6 +408,85 @@ def snapshot(acct=None, prices=None, book=MAIN):
     pd.DataFrame([row]).to_csv(book.balance, mode="a", header=not book.balance.exists(), index=False)
 
 
+def missing_hours(hist, end, gap=pd.Timedelta("75min")):
+    """Whole hours with no balance point: inside any gap longer than `gap`, and after the last point up to `end`."""
+    times = pd.to_datetime(hist["time"], utc=True, format="ISO8601").sort_values().tolist() + [end]
+    hours = []
+    for a, b in zip(times[:-1], times[1:]):
+        if b - a > gap:
+            hours += list(pd.date_range(a.ceil("h") + pd.Timedelta("1h") if a.ceil("h") == a else a.ceil("h"),
+                                        b - pd.Timedelta("30min"), freq="h"))
+    return pd.DatetimeIndex(hours)
+
+
+def holdings_at(trades_df, t, accounts, start_cash, per_sleeve):
+    """Each account's (cash, {symbol: coins}) at time t, rebuilt from the trade log. With per_sleeve, each coin has
+    its own cash sleeve (crypto books); otherwise one cash balance per account (stock book)."""
+    done = trades_df[pd.to_datetime(trades_df["time"], utc=True, format="ISO8601") <= t]
+    out = {}
+    for a, symbols in accounts.items():
+        mine = done[done["account"] == a]
+        qty = {s: float(mine.loc[(mine["symbol"] == s) & (mine["side"] == "BUY"), "quantity"].sum()
+                     - mine.loc[(mine["symbol"] == s) & (mine["side"] == "SELL"), "quantity"].sum()) for s in symbols}
+        if per_sleeve:
+            cash = 0.0
+            for s in symbols:
+                last = mine[mine["symbol"] == s]
+                cash += float(last["cash_after"].iloc[-1]) if len(last) else start_cash / len(symbols)
+        else:
+            cash = float(mine["cash_after"].iloc[-1]) if len(mine) else start_cash
+        out[a] = (cash, qty)
+    return out
+
+
+def fill_gaps(balance_path, hist, trades_df, accounts, start_cash, per_sleeve, end, price_at):
+    """Add an hourly balance point for every missing hour (rebuilt holdings x real hourly closes), keep the file in
+    time order, and return how many were added. `price_at(symbols, hours)` returns a DataFrame of prices."""
+    hours = missing_hours(hist, end)
+    if len(hours) == 0:
+        return 0
+    symbols = sorted({s for syms in accounts.values() for s in syms})
+    prices = price_at(symbols, hours)
+    rows = []
+    for h in hours:
+        held = holdings_at(trades_df, h, accounts, start_cash, per_sleeve)
+        row = {"time": h.isoformat(timespec="seconds")}
+        for a, (cash, qty) in held.items():
+            vals = [q * prices.at[h, s] for s, q in qty.items() if abs(q) > 1e-12]
+            row[a] = round(cash + sum(vals), 4) if not any(pd.isna(v) for v in vals) else np.nan
+        if not any(pd.isna(v) for k, v in row.items() if k != "time"):
+            rows.append(row)
+    if not rows:
+        return 0
+    merged = pd.concat([hist, pd.DataFrame(rows)], ignore_index=True)
+    merged["_t"] = pd.to_datetime(merged["time"], utc=True, format="ISO8601")
+    merged = merged.sort_values("_t").drop(columns="_t")
+    with config.atomic(balance_path) as tmp:
+        merged.to_csv(tmp, index=False)
+    return len(rows)
+
+
+def backfill_balance(book=MAIN):
+    """After downtime: an hourly balance point for every hour the service missed, from the holdings at that hour
+    (rebuilt from the trade log) and real hourly closes. Returns how many points were added."""
+    acct = load(book)
+    hist = balance_history(book)
+    if acct is None or hist.empty:
+        return 0
+    end = min(pd.Timestamp.now(tz="UTC"), pd.Timestamp(acct["ends"]))
+
+    def price_at(symbols, hours):
+        out = {}
+        for s in symbols:
+            c = data.update(s, "1h")["close"]
+            c.index = c.index + pd.Timedelta("1h")  # an hourly close is the price at the end of the hour
+            out[s] = c.reindex(hours, method="ffill")
+        return pd.DataFrame(out, index=hours)
+
+    accounts = {a: list(sleeves) for a, sleeves in acct["accounts"].items()}
+    return fill_gaps(book.balance, hist, trades(book), accounts, acct["start_cash"], True, end, price_at)
+
+
 def standings(acct, prices):
     """Accounts ranked by balance, as text lines."""
     v = value(acct, prices)

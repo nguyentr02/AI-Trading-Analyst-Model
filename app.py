@@ -306,9 +306,24 @@ def service_running():
     return (pd.Timestamp.now(tz="UTC") - pd.Timestamp(s["updated"])).total_seconds() < 180
 
 
-def model_version(tf):
-    m = model.load_metrics(tf)
-    return m["trained_at"] if m else None
+def data_version(paths):
+    """Last-modified times of data files. Passed to a cached function, it makes the result recompute as soon as any
+    of the files changes (new candles, new readings), instead of waiting for the cache to expire."""
+    return tuple(p.stat().st_mtime_ns if p.exists() else 0 for p in paths)
+
+
+def model_version(name):
+    """Cache key for anything built on a model: its training time plus the last change of the candles it reads, so
+    signals update as soon as new data arrives, even when the retrained model was not kept. None if no model yet."""
+    m = model.load_metrics(name)
+    if not m:
+        return None
+    tf = config.MODELS[name]["timeframe"]
+    return (m["trained_at"], *data_version([data._cache_path(s, tf) for s in config.SYMBOLS]))
+
+
+def stock_data_version():
+    return data_version([config.DATA_DIR / f"stock_{t}_1d.csv" for t in stocks.STOCKS]) + data_version([stockai.RESULTS])
 
 
 @st.cache_resource
@@ -1084,7 +1099,7 @@ def advice_section():
     if None in versions:
         st.caption("The advice appears once the models are trained.")
         return
-    mtime = config.PORTFOLIO_FILE.stat().st_mtime if config.PORTFOLIO_FILE.exists() else 0
+    mtime = data_version([config.PORTFOLIO_FILE, droprisk.CURRENT_FILE])  # portfolio saved, or new drop warning
     advice = get_advice(versions, mtime)
 
     act = advice[advice["action"].isin(["BUY", "SELL"])]
@@ -1439,7 +1454,7 @@ def page_altcoins():
                "trading). Testing found the AI reads them barely better than a coin flip, while the 50-day trend "
                "rule did far better on them.")
     try:
-        r = get_alt_readings(model_version("4h"))
+        r = get_alt_readings((model_version("4h"), data_version([altcoins.SIGNALS_FILE])))
     except Exception as e:
         st.error(f"Could not compute the readings: {e}")
         r = pd.DataFrame()
@@ -1646,12 +1661,13 @@ def page_patterns():
 
 # ---------------- US stocks ----------------
 @st.cache_data(ttl=6 * 3600, show_spinner="Loading 10 years of stock history (first time about 10 seconds)…")
-def get_stock_analysis():
+def get_stock_analysis(version=None):
+    """`version` (stock_data_version) recomputes it as soon as new stock closes are saved."""
     return stocks.analyse_all()
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
-def get_momentum_test():
+def get_momentum_test(version=None):
     return stocks.momentum_test()
 
 
@@ -1672,7 +1688,7 @@ def page_stocks():
                "stocks on Binance; tokenized spot pairs like NVDAB/USDT also exist). Binance's stock history is only "
                "months long, so the hold-vs-trade tests below use 10 years of daily closes from Yahoo Finance.")
     try:
-        a = get_stock_analysis()
+        a = get_stock_analysis(stock_data_version())
     except Exception as e:
         st.error(f"Could not load stock history: {e}")
         return
@@ -1716,7 +1732,7 @@ def page_stocks():
                "(survivorship bias), so their past returns look better than a stock picked in advance would have; "
                "hold vs trade on the same stock is the fair comparison.")
 
-    m = get_momentum_test()
+    m = get_momentum_test(stock_data_version())
     with st.container(border=True):
         st.markdown("**Picking the strongest stocks each month (momentum)**")
         st.caption(f"Holding the 5 stocks with the best past-year return (skipping the last month), rebalanced "
@@ -1765,7 +1781,7 @@ def page_stock_signals():
     st.title("Stock signals")
     ai = stockai.load()
     try:
-        a = get_stock_analysis()
+        a = get_stock_analysis(stock_data_version())
     except Exception as e:
         st.error(f"Could not load stock history: {e}")
         return
@@ -1920,7 +1936,7 @@ def market_monitor():
 def page_stock_backtest():
     st.title("Stock backtest")
     try:
-        a = get_stock_analysis().set_index("ticker")
+        a = get_stock_analysis(stock_data_version()).set_index("ticker")
     except Exception as e:
         st.error(f"Could not load stock history: {e}")
         return
@@ -1964,7 +1980,7 @@ def page_stock_portfolio():
     st.title("Stock portfolio")
     holdings, cash = stocks.load_portfolio()
     try:
-        a = get_stock_analysis()
+        a = get_stock_analysis(stock_data_version())
         live = {t: p[0] for t, p in get_stock_prices().items()}
     except Exception:
         a, live = pd.DataFrame(), {}

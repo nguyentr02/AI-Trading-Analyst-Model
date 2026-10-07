@@ -14,7 +14,7 @@ import json
 import socket
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import ccxt
@@ -29,6 +29,16 @@ STREAM_URL = "wss://stream.binance.com:9443/stream?streams="
 WAIT_FOR_ALL = 20  # seconds to wait for every symbol's close message before processing anyway
 HEARTBEAT = 60  # seconds between status file updates, so the dashboard can tell the service is alive
 NEW_YORK = ZoneInfo("America/New_York")  # the US market closes at 16:00 here (summer and winter time handled)
+STOCK_STATE = config.LOG_DIR / "stock_state.json"  # the last US close the stock jobs handled
+
+
+def last_us_close():
+    """Date (New York) of the most recent US market close (16:00, Monday to Friday) that has already happened."""
+    ny = datetime.now(NEW_YORK)
+    day = ny.date() if ny.hour >= 16 else ny.date() - timedelta(days=1)
+    while day.weekday() >= 5:
+        day -= timedelta(days=1)
+    return str(day)
 
 
 # Problems reaching Binance. (Not all OSErrors: a PermissionError on a locked file is a different problem.)
@@ -151,6 +161,7 @@ class LiveService:
         self._save_status()
 
     def catch_up(self):
+        self.backfill()
         for tf in self.timeframes:
             try:
                 self.learn(tf, "catch-up")
@@ -221,22 +232,26 @@ class LiveService:
             return
         self._crash_failing = False
 
-    def stock_close(self):
+    def stock_close(self, late=False):
         """Every minute: at the US market close (16:00 New York time, Monday to Friday) decide and fill the stock
-        paper trades at that moment's Binance price, send stock alerts, then retrain the stock AI."""
-        ny = datetime.now(NEW_YORK)
-        today = ny.strftime("%Y-%m-%d")
-        if ny.weekday() >= 5 or not (16 <= ny.hour < 20) or self.status.get("stocks_day") == today:
+        paper trades at that moment's Binance price, send stock alerts, then retrain the stock AI. After downtime
+        (late=True, from catch_up) the last missed close is handled straight away, at the current price, and the
+        trades say so. The last close handled is kept in STOCK_STATE, so a restart never skips or repeats one."""
+        close_day = last_us_close()
+        if self._stock_state().get("last_close") == close_day:
             return
-        self.status["stocks_day"] = today  # once a day, even if a step below fails
-        self._save_status()
+        ny = datetime.now(NEW_YORK)
+        if not late and ny.strftime("%Y-%m-%d") != close_day:
+            return  # between closes: wait for the next one
+        self._save_stock_state(close_day)  # once per close, even if a step below fails
+        note = " (late: the service was offline at the US close)" if late else ""
         try:
             t0 = time.time()
             for t in stocks.STOCKS:
-                stocks.candles(t, max_age_hours=0)  # today's close
+                stocks.candles(t, max_age_hours=0)  # the latest closes
             if stockpaper.is_open():
-                n = stockpaper.step()
-                log(f"    STOCKS paper at the US close: {n} trades [{time.time() - t0:.0f}s after 16:00 New York]")
+                n = stockpaper.step(force=late, note=note)
+                log(f"    STOCKS paper for the {close_day} US close{note}: {n} trades [{time.time() - t0:.0f}s]")
             for s in stocks.alerts(lambda title, body: notify.send(title, body)):
                 log(f"    STOCK ALERT: {s}")
             r = stockai.train_and_test()
@@ -244,6 +259,38 @@ class LiveService:
                 f"{'beats' if r['trade_on_ai'] else 'does not beat'} holding [{time.time() - t0:.0f}s]")
         except Exception:
             log(f"stock close jobs failed:\n{traceback.format_exc()}")
+
+    @staticmethod
+    def _stock_state():
+        try:
+            return json.loads(STOCK_STATE.read_text())
+        except (OSError, ValueError):
+            return {}
+
+    @staticmethod
+    def _save_stock_state(close_day):
+        with config.atomic(STOCK_STATE) as tmp:
+            tmp.write_text(json.dumps({"last_close": close_day}))
+
+    def backfill(self):
+        """After downtime: fill the paper trials' balance history for the hours missed, and handle a missed US close.
+        Runs before the catch-up trades, while holdings are still as they were when the service stopped."""
+        for book in paper.BOOKS:
+            if paper.is_open(book):
+                try:
+                    n = paper.backfill_balance(book)
+                    if n:
+                        log(f"    backfilled {n} hourly balance points for the {book.key} paper trial")
+                except Exception as e:
+                    log(f"    balance backfill ({book.key}) failed: {type(e).__name__}: {e}")
+        if stockpaper.is_open():
+            try:
+                n = stockpaper.backfill_balance()
+                if n:
+                    log(f"    backfilled {n} hourly balance points for the stock paper trial")
+            except Exception as e:
+                log(f"    stock balance backfill failed: {type(e).__name__}: {e}")
+        self.stock_close(late=True)
 
     # ---------- streaming ----------
     def _url(self):
