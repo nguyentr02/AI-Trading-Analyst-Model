@@ -128,7 +128,7 @@ offline again, run the setup command from step 2 without `-Online`.
 | Page | What you see |
 |---|---|
 | **Market** | Live prices updating every second, 24h change, high/low, volume, market cap, supply, all-time high, and whale activity (big trades, liquidations, open interest) |
-| **Signals** | For each coin and window: **potential growth**, **potential decline** or no clear direction, and **how much** (the average move and typical range that really followed similar readings in 2022-2026), plus drop risk and a log of recent changes. The badge at the top shows whether the live learning service is running. Recompute the "how much" numbers with `python -m cryptoai outlook` |
+| **Signals** | The crypto **Fear & Greed Index** (market mood), and each coin's **news mood** over 24 hours with its latest headlines. For each coin and window: **potential growth**, **potential decline** or no clear direction, and **how much** (the average move and typical range that really followed similar readings in 2022-2026), plus drop risk and a log of recent changes. The badge at the top shows whether the live learning service is running. Recompute the "how much" numbers with `python -m cryptoai outlook` |
 | **Chart** | Candlestick chart with the model's P(up) underneath |
 | **Backtest** | How the strategy would have done on data the model had not seen, model accuracy, **Learning history**, and a **Retrain models** button |
 | **Portfolio** | AI advice (buy / sell / hold, with amounts) for your holdings and spare cash, plus value, profit/loss and allocation |
@@ -137,7 +137,7 @@ offline again, run the setup command from step 2 without `-Online`.
 | **Altcoins → Altcoin paper trading** | A separate 4-week trial of the same five accounts on those six altcoins |
 | **Altcoins → What the AI learnt** | What testing found about altcoins |
 | **US stocks → Stock market** | 17 US stocks and ETFs listed on Binance (Nvidia, Apple, Microsoft, Uber, SPY, QQQ, ...): live Binance prices and charts, trend and risk, and whether trading them with trend rules beat simply holding (tested on 10 years of Yahoo history) |
-| **US stocks → Stock signals** | **Buy for hold now**: the tested list (an equal share of every stock above its 200-day average, reviewed monthly) on live prices; the **US market crash monitor**; and each stock's trend and the stock AI's 5-day chance of a rise |
+| **US stocks → Stock signals** | Each stock's **news mood** over 24 hours with its latest headline; **Buy for hold now**: the tested list (an equal share of every stock above its 200-day average, reviewed monthly) on live prices; the **US market crash monitor**; and each stock's trend and the stock AI's 5-day chance of a rise |
 | **US stocks → Stock backtest** | Any stock: holding vs a 50/100/200-day trend rule over 10 years, and how trading on the stock AI did |
 | **US stocks → Stock portfolio** | Enter your stocks and spare cash for hold-first advice: flags one stock above 25% of your stock money, notes trend and worst historical fall, and plans cash in 4 weekly steps |
 | **US stocks → Stock paper trading** | A 4-week trial: hold all, all in QQQ, buy in 4 weekly steps, the 200-day rule and the AI risk filter, at Binance stock prices |

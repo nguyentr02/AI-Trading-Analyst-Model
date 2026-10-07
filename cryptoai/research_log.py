@@ -94,6 +94,16 @@ LOG = pd.DataFrame([
      "trend or steadiest)", "Steadiest chosen (2021-2022: +5% vs -16% for the list) but lagged the list in 2023-2026 "
      "(+172% vs +921%); no one-stock rule beat the list. Shown as 'if you only buy one'", PARTLY,
      "experiments/stock_top_pick.py"),
+    ("2026-10-07", "Model inputs", "Crypto Fear & Greed Index (level, 7-day change, vs 90 days) added to the crypto "
+     "models", "Lower AUC: next 1 day -0.011 / -0.005, next 3 days -0.009 / -0.009 (2022-2024 / 2025-2026)",
+     NOT_ADOPTED, "experiments/fear_greed.py"),
+    ("2026-10-07", "US stocks", "Slow fundamentals learnt on 588 S&P 500 stocks (net share issuance, buybacks, gross "
+     "profitability, ROE; point-in-time SEC filings) as a tilt on the buy list", "Composite rank IC +0.057 (t 2.6) in "
+     "2016-2022 but -0.004 (t -0.2) in 2023-2026; tilt Sharpe 0.63 vs 0.83 and 1.72 vs 2.05", NOT_ADOPTED,
+     "experiments/fundamental_tilt.py"),
+    ("2026-10-07", "News", "Headline news mood (VADER + finance words) for every coin and stock", "Shown with the "
+     "signals; cannot be tested honestly on past data, so it is logged with each signal (logs/news_log.csv) for a "
+     "forward test", FINDING, "cryptoai/news.py"),
     ("2026-10-06", "Model training", "One shared AI trained on crypto and stocks together vs separate AIs",
      "Worse everywhere: crypto AUC 0.495/0.498 vs 0.520/0.522, stocks 0.460/0.508 vs 0.486/0.520", NOT_ADOPTED,
      "experiments/shared_brain.py"),

@@ -7,3 +7,4 @@ scikit-learn==1.9.1
 streamlit==1.65.0
 requests==2.34.2
 lightgbm==4.7.0
+vaderSentiment==3.3.2

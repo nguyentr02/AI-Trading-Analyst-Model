@@ -41,6 +41,16 @@
 | `experiments/shared_brain.py`: one AI trained on crypto and stocks together vs separate AIs (daily, 5-day target) | Worse everywhere: crypto AUC 0.495/0.498 vs 0.520/0.522; stocks 0.460/0.508 vs 0.486/0.520 (2020-2022 / 2023-2026). Not adopted |
 | `experiments/stock_regime.py`: halve the buy list's exposure when VIX > VIX3M, when HYG/IEF fell 2%+ in 21 days, or both | All lower Sharpe in 2016-2022 (0.66-0.78 vs 0.83) and 2023-2026 (1.85-2.03 vs 2.05), with no smaller worst fall. Not adopted |
 
-## Next step (not started)
+## Fundamentals on the S&P 500 (2026-10-07)
 
-Learn slow fundamental tilts (net share issuance, buyback yield, gross profitability) on a wide universe: S&P 500 with historical membership, EDGAR first-filed values, monthly decisions; then test them as a tilt on the buy list with the usual rule (better in both 2016-2022 and 2023-2026). Several gigabytes of downloads and a few hours of processing.
+`experiments/fundamentals_download.py` and `experiments/fundamental_tilt.py`: 588 S&P 500 stocks (members as of each month end, 2015-2026; about 150 delisted names lacked Yahoo or EDGAR data, a remaining survivorship gap), 53,891 stock-months, features from first-filed SEC values only.
+
+| Feature (direction learnt on 2016-2022) | Rank IC 2016-2022 | Rank IC 2023-2026 |
+|---|---|---|
+| Net share issuance (lower is better) | -0.040 (t -1.7) | -0.015 (t -0.7) |
+| Net buybacks / assets (higher is better) | +0.053 (t +2.7) | -0.002 (t -0.1) |
+| Gross profitability (higher is better) | +0.033 (t +1.2) | -0.009 (t -0.5) |
+| Return on equity (higher is better) | +0.053 (t +2.2) | -0.001 (t -0.1) |
+| Composite | +0.057 (t +2.6) | -0.004 (t -0.2) |
+
+The textbook effects were there in 2016-2022 (buybacks and profitability ranked the next 3 months' winners), then vanished in 2023-2026, when a few AI-driven growth stocks led the market. Cutting our buy list to its top half by the composite lowered Sharpe in both periods (0.63 vs 0.83; 1.72 vs 2.05). Not adopted. Strongest fundamentals among our stocks now: AAPL, NVDA, UBER; weakest: INTC (shares outstanding up 16% in a year), TSLA, AMZN.

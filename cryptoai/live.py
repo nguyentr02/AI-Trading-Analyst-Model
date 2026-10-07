@@ -22,7 +22,7 @@ import pandas as pd
 import requests
 from websockets.sync.client import connect
 
-from . import (advisor, altcoins, config, droprisk, explain, model, notify, paper, preview, signals, stockai,
+from . import (advisor, altcoins, config, droprisk, explain, model, news, notify, paper, preview, signals, stockai,
                stockpaper, stocks, whales)
 
 STREAM_URL = "wss://stream.binance.com:9443/stream?streams="
@@ -76,6 +76,22 @@ class LiveService:
         if tf == advisor_timeframe():
             self.advise()
         self.paper_trade(tf)
+        if tf == "4h":
+            self.log_news()
+
+    def log_news(self, stocks_too=False):
+        """Log each asset's news mood with the AI's reading (logs/news_log.csv), to test later whether news helps.
+        Crypto at every 4h close; stocks at the US close."""
+        try:
+            if stocks_too:
+                sig = (stockai.load() or {}).get("signals", {})
+                readings = {t: v["p_up_5d"] for t, v in sig.items()}
+            else:
+                s = signals.current("4h", refresh=False).set_index("symbol")["prob_up"]
+                readings = {sym: float(p) for sym, p in s.items()}
+            news.log_moods(readings)
+        except Exception as e:
+            log(f"news logging failed ({type(e).__name__}: {e})")
 
     def trade_first(self, tf):
         """At a candle close, decide with the current models and fill at the live price straight away. Retraining
@@ -257,6 +273,7 @@ class LiveService:
             r = stockai.train_and_test()
             log(f"stock AI retrained: AUC {r['auc']['2023-now']:.3f} (2023-now); trading on it "
                 f"{'beats' if r['trade_on_ai'] else 'does not beat'} holding [{time.time() - t0:.0f}s]")
+            self.log_news(stocks_too=True)
         except Exception:
             log(f"stock close jobs failed:\n{traceback.format_exc()}")
 

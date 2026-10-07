@@ -8,7 +8,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from cryptoai import (advisor, altcoins, auth, backtest, config, data, droprisk, explain, live, market, metrics, model,
-                      notify, outlook, paper, portfolio, preview, research_log, signals, stockai, stockpaper, stocks,
+                      news, notify, outlook, paper, portfolio, preview, research_log, signals, stockai, stockpaper, stocks,
                       whales)
 
 ASSETS = config.ROOT / "assets"
@@ -239,6 +239,10 @@ COLUMN_HELP = {
     "Size": "Dollar size of the trade or liquidations.",
     "Detail": "More about the event.",
     "Coin pair": "A Binance pair, like BTC/USDT.",
+    "News mood (24h)": "Average tone of the last 24 hours' headlines, from -1 (negative) to +1 (positive).",
+    "Mood": "Positive at +0.15 or more, Negative at -0.15 or less, otherwise Mixed.",
+    "Headlines": "Number of headlines in the last 24 hours.",
+    "Latest headline": "The newest headline about this stock.",
     # backtest page
     "Year": "Calendar year of the test.",
     "AI strategy": "The AI strategy's return that year, after fees.",
@@ -569,7 +573,52 @@ WINDOW_TEXT = {"4h_next": "the next 4 hours", "4h": "the next day", "1d": "the n
 def page_signals():
     st.title("Signals")
     service_badge()
+    market_mood()
     signal_board()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_news(crypto=(), stocks_=()):
+    """Recent headlines with sentiment scores, refreshed every 10 minutes."""
+    return news.headlines(list(crypto), list(stocks_))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_fear_greed():
+    return news.fear_greed(120)
+
+
+def market_mood():
+    """Crypto Fear & Greed Index: shown for context; whether it improves the AI is tested in experiments/fear_greed.py."""
+    try:
+        fg = get_fear_greed()
+    except Exception:
+        return
+    now, week = fg["value"].iloc[-1], fg["value"].iloc[-8] if len(fg) > 8 else fg["value"].iloc[0]
+    color = "red" if now <= 25 else "orange" if now <= 45 else "gray" if now < 55 else "green" if now < 75 else "violet"
+    with st.container(border=True):
+        line = st.container(horizontal=True, vertical_alignment="center", gap="small")
+        line.markdown(f"**Crypto market mood: Fear & Greed {now}**", width="content")
+        line.badge(fg["value_classification"].iloc[-1], color=color, icon=":material/mood:")
+        st.caption(f"{now - week:+d} over the last week (0 = extreme fear, 100 = extreme greed; from volatility, momentum, "
+                   "social media and search trends). Shown for context: it does not change the signals unless testing "
+                   "shows it helps.")
+
+
+def news_line(df):
+    """'News (24h)' line and headline list for one asset."""
+    m, n = news.mood(df)
+    color = {"Positive": "green", "Negative": "red"}.get(news.label(m), "gray")
+    line = st.container(horizontal=True, vertical_alignment="center", gap="small")
+    line.markdown("News, 24h", width="content")
+    line.badge(f"{news.label(m)}" + (f" {m:+.2f}" if n else ""), color=color, icon=":material/newspaper:")
+    with st.expander(f"{n} headlines" if n else "Latest headlines", icon=":material/feed:"):
+        for r in df.head(6).itertuples():
+            tone = ":green[▲]" if r.score >= 0.15 else ":red[▼]" if r.score <= -0.15 else ":gray[●]"
+            when_txt = f" · {when(r.time, '%b %d %H:%M')}" if pd.notna(r.time) else ""
+            st.markdown(f"{tone} [{r.title}]({r.link}){when_txt}")
+        st.caption("Mood: the average tone of the last 24 hours' headlines (-1 to +1), scored by word lists. News does "
+                   "not change the AI's signal yet; it is logged with every signal to test whether it should.")
 
 
 def service_badge():
@@ -642,6 +691,10 @@ def signal_board():
         live_preview = None  # the service has stopped updating it; don't show stale "live" numbers
     drops = (droprisk.load() or {}).get("coins", {})
     look = outlook.load()
+    try:
+        headlines_now = get_news(tuple(config.SYMBOLS))
+    except Exception:
+        headlines_now = {}
 
     cards = st.columns(len(config.SYMBOLS), gap="medium")
     for card, sym in zip(cards, config.SYMBOLS):
@@ -655,6 +708,8 @@ def signal_board():
                 signal_row(n, sigs[n].loc[sym], now, look)
             if sym in drops:
                 drop_row(drops[sym])
+            if sym in headlines_now:
+                news_line(headlines_now[sym])
 
     with st.container(border=True):
         st.markdown("**How to read these**")
@@ -1787,6 +1842,7 @@ def page_stock_signals():
         return
     stock_buy_list(a)
     market_monitor()
+    stock_news()
     st.subheader("Every stock")
     if ai is None:
         st.info("The stock AI hasn't run yet. It retrains every day after the US close, or run "
@@ -1908,6 +1964,31 @@ def stock_buy_list(a):
                f"2.05 vs 1.91 on 2023-2026) with a smaller worst fall (-46% vs -59%). A stock far above its sell line "
                "has more room before a sell but has already run up; 'Worst fall' shows how much each has dropped "
                "before. Tested on past data, not a guarantee.")
+
+
+def stock_news():
+    """Each stock's news mood over the last 24 hours, with its latest headline."""
+    st.subheader("News", icon=":material/newspaper:")
+    try:
+        hl = get_news(stocks_=tuple(stocks.STOCKS))
+    except Exception as e:
+        st.caption(f"News unavailable: {e}")
+        return
+    rows = []
+    for t, df in hl.items():
+        m, n = news.mood(df)
+        top = df.iloc[0] if len(df) else None
+        rows.append({"Stock": f"{t} · {stocks.STOCKS[t]}", "News mood (24h)": m, "Mood": news.label(m), "Headlines": n,
+                     "Latest headline": top["title"] if top is not None else "", "Link": top["link"] if top is not None else None})
+    df = pd.DataFrame(rows).sort_values("News mood (24h)", ascending=False, na_position="last")
+    table(df.style.format({"News mood (24h)": "{:+.2f}"}, na_rep="–")
+          .map(lambda x: f"color: {UP}" if x == "Positive" else f"color: {DOWN}" if x == "Negative" else "",
+               subset=["Mood"]),
+          hide_index=True, width="stretch", alt="News mood for each stock",
+          column_config={"Link": st.column_config.LinkColumn("Link", display_text="Open", help="Open the latest headline."),
+                         "Latest headline": st.column_config.TextColumn(width="large")})
+    st.caption("Headlines from Yahoo Finance, scored by word lists (-1 to +1). News does not change the buy list or the "
+               "AI yet: it is logged with the signals so its value can be tested on data collected from now on.")
 
 
 @st.fragment(run_every=60)
