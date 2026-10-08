@@ -1,0 +1,27 @@
+// Syncthing: what is synced between the 24/7 PC and your other PCs (see README, "Running on two PCs").
+// Only the live state is synced: candles, models, logs, paper trials and your settings. The code comes from
+// GitHub instead, so .git, .venv and the source files are never synced. The first matching line wins.
+
+// temporary files from atomic saves (config.atomic) and this PC's own alert viewer state
+*.tmp
+/viewer_state.json
+
+!/data
+!/models
+!/logs
+!/paper
+!/paper_alts
+!/paper_stocks
+!/paper_archive_*
+!/paper_alts_archive_*
+!/paper_stocks_archive_*
+!/portfolio.json
+!/stock_portfolio.json
+!/grid_bots.json
+!/notify.json
+!/dashboard_auth.json
+!/auth_tokens.json
+!/signals_log.csv
+
+// everything else (code, .git, .venv, reports, tools) stays per PC
+*

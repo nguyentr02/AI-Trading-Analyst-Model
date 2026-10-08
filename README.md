@@ -370,10 +370,66 @@ tasks so they use the new code. On a 24/7 PC, it needs an Admin PowerShell, as i
 
 Don't stop it with **End** in Task Scheduler: that only stops the hidden launcher, and the AI keeps running.
 
+### Running on two PCs (a 24/7 PC does the work, this PC views)
+
+One PC runs everything: live learning, the paper trials, alerts, the dashboard and the online link. Your other
+PC keeps an up-to-date copy of the data, models, trials and settings, and shows the alerts, but runs nothing
+itself. Only one PC may run the live service: two would double every paper trade and alert, so the service
+refuses to start while another PC's copy is running (it checks `logs\live_status.json`).
+
+What goes where:
+
+| | How it gets there |
+|---|---|
+| Code | GitHub. The 24/7 PC pulls new code every 15 minutes and restarts on it, after checking that it works (`update.ps1`, log in `logs\update.log`). Broken code is never run: it stays on the version it had. |
+| Candles, models, logs, paper trials, your portfolios and settings | [Syncthing](https://syncthing.net) (free, encrypted, PC to PC over the internet; no cloud account, no router setup). The project's `.stignore` file limits it to exactly these, so code, `.git` and `.venv` are never synced. |
+
+**1. On the 24/7 PC: install the code** (Part 1, steps 1 and 2). Skip step 3 (`train.bat`): the data and models
+come from your current PC in step 3 below, already trained.
+
+**2. On both PCs: install Syncthing.** From [syncthing.net/downloads](https://syncthing.net/downloads/), the
+**Syncthing Windows Setup** installer is the easiest; it runs in the background from login. Its control page is
+at http://127.0.0.1:8384. To pair the PCs: on the 24/7 PC, **Actions → Show ID** and copy the ID; on your
+current PC, **Add Remote Device** and paste it; accept the request that appears on the 24/7 PC.
+
+**3. Copy the state to the 24/7 PC.** On your current PC: **Add Folder**, folder path = this project folder,
+**Folder Type: Send Only** (Advanced tab), and tick the 24/7 PC under Sharing. On the 24/7 PC, accept the share,
+set its path to the project folder you cloned in step 1, and choose **Folder Type: Receive Only**. Wait until
+both show **Up to Date** (about 830 MB the first time).
+
+**4. Switch over.**
+
+1. On your current PC (PowerShell in the project folder):
+   `powershell -ExecutionPolicy Bypass -File setup_autostart.ps1 -Viewer`
+   This stops live learning, the dashboard and the online link here, and starts the alert viewer.
+2. Wait for Syncthing to show **Up to Date** again (a minute or two).
+3. In Syncthing, change the folder type: **Send Only** on the 24/7 PC, **Receive Only** on your current PC.
+4. On the 24/7 PC (PowerShell **as administrator**, in the project folder):
+   `powershell -ExecutionPolicy Bypass -File setup_autostart.ps1 -AtStartup -Online -AutoUpdate`
+   If your current PC's service ran less than 10 minutes ago, it waits for that to pass, then starts and
+   catches up on anything missed.
+5. On the 24/7 PC turn sleep off: Settings → System → Power → Sleep = **Never**.
+
+**Day to day:**
+
+- **Dashboard:** open the online link (in `logs\public_url.txt`, which syncs to your PC too; the 24/7 PC also
+  sends it as an alert). Same login as before. The badge on Signals shows which PC is running live learning.
+- **Alerts** appear as Windows notifications on your PC (the alert viewer shows every alert the 24/7 PC sends,
+  from `logs\alerts.csv`) and on Zalo if set up.
+- **Make changes in the online dashboard** (portfolios, grid bots, starting a paper trial): it runs on the 24/7
+  PC. Files changed on your PC are overwritten by the 24/7 PC's version. If Syncthing on your PC ever lists
+  **Locally Changed Items**, click **Revert Local Changes**.
+- **New code** reaches the 24/7 PC within 15 minutes of being pushed to GitHub.
+
+**To move everything back to one PC:** run `setup_autostart.ps1 -Remove` on the 24/7 PC, wait for Syncthing to be
+up to date, swap the folder types back, and run `setup_autostart.ps1` (with the options you want) on the PC
+that takes over.
+
 ### Moving to another PC
 
 Repeat Part 1 on the new PC. Price data and models are rebuilt by `train.bat`. Your holdings are in
-`portfolio.json`, which is not on GitHub for privacy; copy that file across if you want them.
+`portfolio.json`, which is not on GitHub for privacy; copy that file across if you want them (or use Syncthing
+as in "Running on two PCs" to copy everything, including the trained models and paper trials).
 
 ---
 
@@ -405,6 +461,8 @@ Repeat Part 1 on the new PC. Price data and models are rebuilt by `train.bat`. Y
 | `live.bat` | Runs the learning service (manual use; auto-start runs it for you) |
 | `daily.bat` | One learning run, logged to `logs\daily.log` |
 | `check_signals.bat` | Logs the current signals to `signals_output.txt` |
+| `update.bat` | Pulls new code from GitHub and restarts on it if it works (the 24/7 PC runs it every 15 minutes) |
+| `alerts.bat` | On a PC that only views: shows the 24/7 PC's alerts as Windows notifications |
 
 ### Command line
 

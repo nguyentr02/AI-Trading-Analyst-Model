@@ -12,9 +12,21 @@
 #   powershell -ExecutionPolicy Bypass -File setup_autostart.ps1 -Remove      # remove all tasks
 #   add -Online to also put the dashboard on the internet through a Cloudflare tunnel ("Crypto AI online
 #   access", tunnel.bat); it needs a login first: .venv\Scripts\python -m cryptoai set-login
-param([switch]$AtStartup, [switch]$Remove, [switch]$Online)
+#   add -AutoUpdate (24/7 PC) to pull new code from GitHub every 15 minutes and restart on it ("Crypto AI
+#   auto-update", update.ps1)
+#
+# Two PCs (README, "Running on two PCs"): the 24/7 PC runs everything
+#   setup_autostart.ps1 -AtStartup -Online -AutoUpdate
+# and a PC that only views runs nothing but the alert viewer (the 24/7 PC's alerts as Windows notifications):
+#   setup_autostart.ps1 -Viewer
+param([switch]$AtStartup, [switch]$Remove, [switch]$Online, [switch]$AutoUpdate, [switch]$Viewer)
 
-$tasks = @{
+$tasks = if ($Viewer) { @{
+    "Crypto AI alerts" = @{
+        Bat  = "alerts.bat"
+        Info = "Shows the 24/7 PC's Crypto AI alerts as Windows notifications (logs\alerts.csv, synced by Syncthing)."
+    }
+} } else { @{
     "Crypto AI live service" = @{
         Bat  = "live.bat"
         Info = "Learns from every closed Binance candle and logs signals. See logs\live.log."
@@ -23,8 +35,8 @@ $tasks = @{
         Bat  = "dashboard_server.bat"
         Info = "Crypto AI dashboard on http://localhost:8501."
     }
-}
-if ($Online) {
+} }
+if ($Online -and -not $Viewer) {
     if (-not (Test-Path (Join-Path $PSScriptRoot "dashboard_auth.json"))) {
         "No login set. Run: .venv\Scripts\python -m cryptoai set-login   (then run this script again)"
         return
@@ -35,7 +47,9 @@ if ($Online) {
     }
 }
 
-foreach ($old in @("Crypto AI daily learning", "Crypto AI online access") + $tasks.Keys) {
+$every = @("Crypto AI daily learning", "Crypto AI live service", "Crypto AI dashboard", "Crypto AI online access",
+           "Crypto AI auto-update", "Crypto AI alerts")
+foreach ($old in $every) {
     if (Get-ScheduledTask -TaskName $old -ErrorAction SilentlyContinue) {
         Stop-ScheduledTask -TaskName $old -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskName $old -Confirm:$false
@@ -45,9 +59,9 @@ foreach ($old in @("Crypto AI daily learning", "Crypto AI online access") + $tas
 # Ending a task only stops the hidden launcher, not the batch loop and Python it started,
 # so stop those too. Otherwise a re-run would leave the old copy running beside the new one.
 $running = Get-CimInstance Win32_Process | Where-Object {
-    $_.CommandLine -match 'run_hidden\.vbs"? (live|dashboard_server|tunnel)\.bat' -or
-    $_.CommandLine -match '/c "?(live|dashboard_server|tunnel)\.bat' -or
-    $_.CommandLine -match '-m cryptoai (live|tunnel)' -or
+    $_.CommandLine -match 'run_hidden\.vbs"? (live|dashboard_server|tunnel|alerts)\.bat' -or
+    $_.CommandLine -match '/c "?(live|dashboard_server|tunnel|alerts)\.bat' -or
+    $_.CommandLine -match '-m cryptoai (live|tunnel|alert-mirror)' -or
     $_.CommandLine -match 'cloudflared(\.exe)?"? tunnel' -or
     $_.CommandLine -match 'streamlit(\.exe)?"? run app\.py'
 }
@@ -77,8 +91,25 @@ foreach ($name in $tasks.Keys) {
     Start-ScheduledTask -TaskName $name
     "Registered and started '$name'."
 }
+if ($AutoUpdate -and -not $Viewer) {
+    # Every 15 minutes, for as long as the PC runs (no end date). update.ps1 only acts when GitHub has new code.
+    $repeat = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 15)
+    $upd = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -MultipleInstances IgnoreNew
+    $action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$PSScriptRoot\run_hidden.vbs`" update.bat" `
+        -WorkingDirectory $PSScriptRoot
+    Register-ScheduledTask -TaskName "Crypto AI auto-update" -Action $action -Trigger $repeat -Principal $principal `
+        -Settings $upd -Description "Pulls new code from GitHub every 15 minutes and restarts on it. See logs\update.log." `
+        -Force | Out-Null
+    "Registered 'Crypto AI auto-update' (every 15 minutes)."
+}
 $when = if ($AtStartup) { "at boot" } else { "when you log in" }
-"Both start $when, run hidden, and restart themselves if they crash. Logs are in the logs folder."
+if ($Viewer) {
+    "This PC now only views: nothing learns or trades here (the 24/7 PC does). The alert viewer starts $when."
+    "Open the dashboard with the online link (logs\public_url.txt, synced from the 24/7 PC)."
+    return
+}
+"They start $when, run hidden, and restart themselves if they crash. Logs are in the logs folder."
 if ($AtStartup) {
     "For a 24/7 PC, also turn off sleep: Settings > System > Power > Sleep = Never (screen off is fine)."
 }

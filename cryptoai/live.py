@@ -51,7 +51,7 @@ class LiveService:
         self.symbols = {s.replace("/", "").lower(): s for s in symbols}
         self.timeframes = timeframes
         self.pending = {}  # (timeframe, open_time_ms) -> (first_seen, set of symbols closed)
-        self.status = {"started": _now(), "state": "starting"}
+        self.status = {"started": _now(), "state": "starting", "host": socket.gethostname()}
         self._saved_at = 0.0
         self._next_preview = 0.0  # due immediately
         self._next_minute = 0.0
@@ -425,8 +425,27 @@ class LiveService:
                 except Exception:
                     log(f"{tf} learning failed, will retry at next candle:\n{traceback.format_exc()}")
 
+    def _other_pc(self):
+        """(name, seconds since its last update) if another PC is running the live service, else None. The status
+        file is synced between PCs (Syncthing), so a fresh one from another host means it is running there."""
+        s = load_status()
+        if not s or s.get("host", socket.gethostname()) == socket.gethostname():  # older files have no host: ours
+            return None
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(s["updated"])).total_seconds()
+        return (s["host"], age) if age < OTHER_PC_STALE else None
+
     def run(self):
-        log(f"Live service starting: {', '.join(self.symbols.values())} on {', '.join(self.timeframes)}")
+        waited = False
+        while (other := self._other_pc()):
+            if not waited:
+                log(f"Standby: {other[0]} is running the live service (its status is {other[1]:.0f} s old). Not "
+                    "starting here too, which would double the trades and alerts; checking every minute.")
+            waited = True
+            time.sleep(60)
+        if waited:
+            log(f"The other PC has not updated for {OTHER_PC_STALE // 60} minutes; starting here.")
+        log(f"Live service starting on {socket.gethostname()}: {', '.join(self.symbols.values())} on "
+            f"{', '.join(self.timeframes)}")
         whales.WhaleWatch().start()  # background threads: big trades, liquidations, open interest (alerts only)
         backoff = 2
         while True:
@@ -481,6 +500,9 @@ def _now():
 def advisor_timeframe():
     """Timeframe of the models the advice reads; it is re-checked after their candle closes."""
     return config.MODELS[advisor.DIRECTION]["timeframe"]
+
+
+OTHER_PC_STALE = 10 * 60  # seconds: another PC's live service counts as running while its status is newer
 
 
 def load_status():

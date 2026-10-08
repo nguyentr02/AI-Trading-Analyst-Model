@@ -23,6 +23,7 @@ def main():
     login.add_argument("--username", help="asked for if left out")
     sub.add_parser("tunnel", help="put the dashboard online via a Cloudflare tunnel and send you the link")
     sub.add_parser("notify-test", help="send a test alert to Windows and Zalo")
+    sub.add_parser("alert-mirror", help="on a PC that only views: show the 24/7 PC's alerts as Windows notifications")
     zs = sub.add_parser("zalo-setup", help="connect your Zalo bot (message the bot from Zalo first)")
     zs.add_argument("token", help="bot token from bot.zaloplatforms.com")
     sim = sub.add_parser("simulate", help="paper-trade a coin over a past period from a starting balance")
@@ -108,6 +109,11 @@ def main():
 
         for channel, result in notify.send("Crypto AI: test alert", "If you can read this, alerts work.").items():
             print(f"{channel}: {result}")
+
+    elif args.cmd == "alert-mirror":
+        from . import notify
+
+        notify.mirror()
 
     elif args.cmd == "zalo-setup":
         from . import notify

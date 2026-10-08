@@ -718,7 +718,8 @@ def service_badge():
                  icon=":material/cloud_off:", color="red")
     elif s["state"] == "listening":
         last = max(s.get(f"last_learn_{n}", "") for n in config.MODELS)
-        st.badge(f"Live learning: listening for candle closes · last learned {when(last, '%H:%M')}",
+        on = f" on {s['host']}" if s.get("host") else ""
+        st.badge(f"Live learning{on}: listening for candle closes · last learned {when(last, '%H:%M')}",
                  icon=":material/sensors:", color="green",
                  help="The service retrains and updates signals a few minutes after every 4h and 1d candle close.")
     else:

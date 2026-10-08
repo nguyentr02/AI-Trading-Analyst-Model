@@ -20,3 +20,5 @@ stock_portfolio.json
 paper_stocks/
 paper_stocks_archive_*/
 grid_bots.json
+viewer_state.json
+alerts_viewer.log
