@@ -28,7 +28,7 @@ def _with_live(cache, live):
 ALT_PREVIEW = config.LOG_DIR / "alt_live_preview.json"
 
 
-def compute(extra=(), path=None):
+def compute(extra=(), path=None, rank_exclude=()):
     """Provisional P(up) for every model and coin, from the live price. Returns the dict that is saved.
 
     With `extra` (e.g. altcoins), the models run on the main coins plus those (the main coins give the market
@@ -64,7 +64,7 @@ def compute(extra=(), path=None):
                     cache = data.load_cached(sym, itf)
                     fresh = data.drop_open_candle(live(sym, itf, 60), itf)  # only bars that have closed
                     bars[sym][itf] = _with_live(cache[cache.index >= since], fresh)
-        probs = model.predict_history(raw, name, bars=bars)
+        probs = model.predict_history(raw, name, bars=bars, rank_exclude=rank_exclude)
         step = pd.Timedelta(tf)
         out["models"][name] = {}
         for sym in report:

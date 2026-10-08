@@ -10,10 +10,14 @@ better than a stock picked in advance would have. Hold-vs-trade on the SAME stoc
 of the hold returns is not.
 """
 import time
+from datetime import date, timedelta
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
 import requests
+
+from dateutil.easter import easter
 
 from . import config, data
 
@@ -259,11 +263,11 @@ TOP_PICK_STATE = config.LOG_DIR / "top_pick.json"
 
 
 def _month_review(month_start):
-    """The review of the month starting at `month_start` (New York): its last weekday, 16:00."""
+    """The review of the month starting at `month_start` (New York): its last US trading day, at the close."""
     end = (month_start + pd.offsets.MonthEnd(1)).normalize()
-    while end.dayofweek >= 5:
+    while not us_market_open(end.date()):
         end -= pd.Timedelta("1D")
-    return end + pd.Timedelta("16h")
+    return end + pd.Timedelta(hours=us_close_hour(end.date()))
 
 
 def last_review_day(now=None):
@@ -305,12 +309,75 @@ TOP_PICK_RECORD = {"pick_2122": 0.05, "list_2122": -0.16, "pick_2326": 1.72, "li
 
 
 def next_review(now=None):
-    """The next monthly review: the last US weekday's close of this month, or of next month once this month's
-    has passed (weekends skipped; US holidays are not)."""
+    """The next monthly review: the last US trading day's close of this month, or of next month once this month's
+    has passed (weekends and NYSE holidays skipped)."""
     now = now or pd.Timestamp.now(tz="America/New_York")
     this_month = now.normalize().replace(day=1)
     review = _month_review(this_month)
     return review if now < review else _month_review(this_month + pd.offsets.MonthBegin(1))
+
+
+# ---------- US market calendar (NYSE) ----------
+def _observed(d):
+    """A fixed-date holiday on a weekend is taken on the Friday before (Saturday) or the Monday after (Sunday)."""
+    return d - timedelta(days=1) if d.weekday() == 5 else d + timedelta(days=1) if d.weekday() == 6 else d
+
+
+def _nth_weekday(year, month, weekday, n):
+    """The n-th `weekday` (0 = Monday) of a month; n = -1 for the last one."""
+    if n > 0:
+        d = date(year, month, 1)
+        d += timedelta(days=(weekday - d.weekday()) % 7)
+        return d + timedelta(weeks=n - 1)
+    d = date(year, month + 1, 1) - timedelta(days=1) if month < 12 else date(year, 12, 31)
+    return d - timedelta(days=(d.weekday() - weekday) % 7)
+
+
+@lru_cache(maxsize=None)
+def us_holidays(year):
+    """Full-day NYSE closures in a year (the regular rules; one-off closures such as national days of mourning are
+    not included)."""
+    days = {
+        _nth_weekday(year, 1, 0, 3),   # Martin Luther King Jr. Day
+        _nth_weekday(year, 2, 0, 3),   # Washington's Birthday
+        easter(year) - timedelta(days=2),  # Good Friday
+        _nth_weekday(year, 5, 0, -1),  # Memorial Day
+        _observed(date(year, 7, 4)),   # Independence Day
+        _nth_weekday(year, 9, 0, 1),   # Labor Day
+        _nth_weekday(year, 11, 3, 4),  # Thanksgiving
+        _observed(date(year, 12, 25)),  # Christmas
+    }
+    if year >= 2022:
+        days.add(_observed(date(year, 6, 19)))  # Juneteenth
+    new_year = date(year, 1, 1)
+    if new_year.weekday() != 5:  # on a Saturday the NYSE does not close the Friday before (Dec 31)
+        days.add(_observed(new_year))
+    return days
+
+
+def us_market_open(day):
+    """Whether the US market trades on `day` (a date): a weekday that is not an NYSE holiday."""
+    return day.weekday() < 5 and day not in us_holidays(day.year)
+
+
+def us_close_hour(day):
+    """The US close on `day`, New York time: 13:00 on the regular early-close days (the day after Thanksgiving,
+    Christmas Eve, and July 3 when it is Monday to Thursday), else 16:00."""
+    early = {_nth_weekday(day.year, 11, 3, 4) + timedelta(days=1), date(day.year, 12, 24)}
+    if date(day.year, 7, 3).weekday() < 4:
+        early.add(date(day.year, 7, 3))
+    return 13 if day in early else 16
+
+
+def last_us_close_day(now=None):
+    """The date (New York) of the most recent US market close that has already happened."""
+    now = now or pd.Timestamp.now(tz="America/New_York")
+    day = now.date()
+    if not (us_market_open(day) and now.hour >= us_close_hour(day)):
+        day -= timedelta(days=1)
+    while not us_market_open(day):
+        day -= timedelta(days=1)
+    return day
 
 
 # ---------- market crash monitor ----------
@@ -323,7 +390,7 @@ def market_status(spy_live=None):
     """Where the US market (SPY) stands: vs its 1-year high, its 200-day average, and today's move."""
     c = history("SPY")
     ny = pd.Timestamp.now(tz="America/New_York")
-    if str(c.index[-1].date()) == ny.strftime("%Y-%m-%d") and ny.hour < 16:
+    if str(c.index[-1].date()) == ny.strftime("%Y-%m-%d") and ny.hour < us_close_hour(ny.date()):
         c = c.iloc[:-1]  # Yahoo's bar for a session still trading is not a close
     px = spy_live or float(c.iloc[-1])
     high = max(float(c.tail(252).max()), px)

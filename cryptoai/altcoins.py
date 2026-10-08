@@ -18,6 +18,7 @@ from . import config, data, droprisk, features, model
 # opened with (TRIAL), so its accounts stay comparable.
 TRIAL = ["NEAR/USDT", "ZEC/USDT", "XRP/USDT", "DOGE/USDT", "AVAX/USDT", "LINK/USDT"]
 WATCH = [*TRIAL, "SUI/USDT"]
+ADDED = [s for s in WATCH if s not in TRIAL]  # left out of the trial coins' cross-coin rank (features.build_all)
 COLORS = {"SUI/USDT": "#4DA2FF", "NEAR/USDT": "#00C08B", "ZEC/USDT": "#F4B728", "XRP/USDT": "#23292F", "DOGE/USDT": "#C2A633",
           "AVAX/USDT": "#E84142", "LINK/USDT": "#2A5ADA"}
 SIGNALS_FILE = config.LOG_DIR / "alt_signals.json"
@@ -91,9 +92,9 @@ def compute(symbols=WATCH, refresh=True):
     mdrop = joblib.load(droprisk.MODEL_FILE) if droprisk.MODEL_FILE.exists() else None
     raw4 = {s: data.drop_open_candle(data.load_cached(s, "4h"), "4h").tail(400) for s in every}
     since = min(df.index[0] for df in raw4.values()) - pd.Timedelta("2D")
-    f4 = features.build_all(raw4, data.intraday(False, since=since, symbols=every))
+    f4 = features.build_all(raw4, data.intraday(False, since=since, symbols=every), rank_exclude=ADDED)
     raw1d = {s: data.drop_open_candle(data.load_cached(s, "1d"), "1d").tail(400) for s in every}
-    f1d = features.build_all(raw1d, None)
+    f1d = features.build_all(raw1d, None, rank_exclude=ADDED)
     coins = {}
     for s in symbols:
         last4, last1d = f4[s].iloc[[-1]], f1d[s].iloc[[-1]]

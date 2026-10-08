@@ -290,7 +290,8 @@ When you change the bot on Binance, change its settings on the page too, so the 
 
 ### US stocks
 
-At the moment the US market closes (16:00 New York time, Monday to Friday; 03:00 or 04:00 Vietnam time), the live
+At the moment the US market closes (16:00 New York time, Monday to Friday; 03:00 or 04:00 Vietnam time; 13:00 on
+early-close days, and nothing on NYSE holidays such as Thanksgiving), the live
 service makes the stock paper trial's decisions and fills them at that moment's Binance price, alerts you (Windows
 and Zalo) when a stock crosses its 200-day average or moves 8% or more in a day, and then retrains the stock AI. Retrain by hand with `.venv\Scripts\python -m cryptoai stock-ai`. Your stocks
 are saved in `stock_portfolio.json` and the trial in `paper_stocks\`, both kept off GitHub.

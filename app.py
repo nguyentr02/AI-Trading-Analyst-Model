@@ -326,7 +326,11 @@ def model_version(name):
     if not m:
         return None
     tf = config.MODELS[name]["timeframe"]
-    return (m["trained_at"], *data_version([data._cache_path(s, tf) for s in config.SYMBOLS]))
+    if service_running():
+        return (m["trained_at"], *data_version([data._cache_path(s, tf) for s in config.SYMBOLS]))
+    # Without the service the dashboard downloads candles itself, which rewrites the files on every call; keying on
+    # their times would then miss the cache every run. Signals use closed candles only, so key on the latest close.
+    return (m["trained_at"], str(pd.Timestamp.now(tz="UTC").floor(pd.Timedelta(tf))))
 
 
 def stock_data_version():

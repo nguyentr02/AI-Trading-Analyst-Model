@@ -141,11 +141,13 @@ def _as_of(src, times):
     return src.reindex(src.index.union(times)).ffill().reindex(times)
 
 
-def build_all(raw, intraday_bars=None):
+def build_all(raw, intraday_bars=None, rank_exclude=()):
     """Features for every coin in `raw` ({symbol: candles}), including market context.
 
     `raw` must contain BTC/USDT, and all coins should cover the same recent period. With `intraday_bars`
     ({symbol: {"15m": candles, "1h": candles}}), 15m/1h patterns up to each candle's close are added.
+    Coins in `rank_exclude` are left out of the other coins' cross-coin rank (each is still ranked against the
+    rest), so adding a coin to a watch list doesn't change the readings of the coins already there.
     """
     own = {s: build(df) for s, df in raw.items()}
     if intraday_bars is not None:
@@ -156,7 +158,11 @@ def build_all(raw, intraday_bars=None):
             extra.index = raw[s].index
             own[s] = f.join(extra)
     btc = own[MARKET][MARKET_COLS].add_prefix("btc_")
-    rank = pd.DataFrame({s: df["close"].pct_change(24) for s, df in raw.items()}).rank(axis=1, pct=True)
+    rets = pd.DataFrame({s: df["close"].pct_change(24) for s, df in raw.items()})
+    pool = [s for s in rets.columns if s not in set(rank_exclude)]
+    rank = rets[pool].rank(axis=1, pct=True)
+    for s in rets.columns.difference(pool):
+        rank[s] = rets[[*pool, s]].rank(axis=1, pct=True)[s]
     if all("funding" in f for f in own.values()):
         market_funding = pd.DataFrame({s: f["funding_3d"] for s, f in own.items()}).mean(axis=1)
     else:

@@ -33,12 +33,9 @@ STOCK_STATE = config.LOG_DIR / "stock_state.json"  # the last US close the stock
 
 
 def last_us_close():
-    """Date (New York) of the most recent US market close (16:00, Monday to Friday) that has already happened."""
-    ny = datetime.now(NEW_YORK)
-    day = ny.date() if ny.hour >= 16 else ny.date() - timedelta(days=1)
-    while day.weekday() >= 5:
-        day -= timedelta(days=1)
-    return str(day)
+    """Date (New York) of the most recent US market close that has already happened (weekends, NYSE holidays and
+    early closes handled by stocks.last_us_close_day)."""
+    return str(stocks.last_us_close_day())
 
 
 # Problems reaching Binance. (Not all OSErrors: a PermissionError on a locked file is a different problem.)
@@ -196,7 +193,7 @@ class LiveService:
                 if not paper.is_open(book):
                     continue
                 readings = live_now if book is paper.MAIN else preview.compute(
-                    extra=tuple(altcoins.WATCH), path=preview.ALT_PREVIEW)
+                    extra=tuple(altcoins.WATCH), path=preview.ALT_PREVIEW, rank_exclude=altcoins.ADDED)
                 done = paper.step_ai_live(readings, book=book)
                 shock = paper.step_shock(book=book)
                 done = pd.concat([d for d in (done, shock) if len(d)]) if len(done) or len(shock) else done
