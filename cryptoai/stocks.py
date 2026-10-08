@@ -258,17 +258,23 @@ TOP3_RECORD = {"top3_2122": -0.08, "top3_2326": 2.92, "top3_worst": -0.39}
 TOP_PICK_STATE = config.LOG_DIR / "top_pick.json"
 
 
-def last_review_day():
-    """The most recent monthly review that has happened: the last US close of the previous month, or this month's
-    if it has passed (New York dates)."""
-    now = pd.Timestamp.now(tz="America/New_York")
-    review = next_review()
+def _month_review(month_start):
+    """The review of the month starting at `month_start` (New York): its last weekday, 16:00."""
+    end = (month_start + pd.offsets.MonthEnd(1)).normalize()
+    while end.dayofweek >= 5:
+        end -= pd.Timedelta("1D")
+    return end + pd.Timedelta("16h")
+
+
+def last_review_day(now=None):
+    """The most recent monthly review that has happened: this month's last US close if it has passed, else the
+    previous month's (New York dates)."""
+    now = now or pd.Timestamp.now(tz="America/New_York")
+    this_month = now.normalize().replace(day=1)
+    review = _month_review(this_month)
     if now >= review:
         return review.normalize()
-    prev = (now - pd.offsets.MonthBegin(1)).normalize() - pd.Timedelta("1D")
-    while prev.dayofweek >= 5:
-        prev -= pd.Timedelta("1D")
-    return prev
+    return _month_review(this_month - pd.offsets.MonthBegin(1)).normalize()
 
 
 def held_top_pick(buy):
@@ -298,30 +304,35 @@ TOP_PICK_RECORD = {"pick_2122": 0.05, "list_2122": -0.16, "pick_2326": 1.72, "li
                    "pick_worst": -0.32, "list_worst": -0.44}
 
 
-def next_review():
-    """The next monthly review: the last US trading day's close of this month (weekends skipped)."""
-    now = pd.Timestamp.now(tz="America/New_York")
-    end = (now + pd.offsets.MonthEnd(0)).normalize()
-    while end.dayofweek >= 5:
-        end -= pd.Timedelta("1D")
-    return end + pd.Timedelta("16h")
+def next_review(now=None):
+    """The next monthly review: the last US weekday's close of this month, or of next month once this month's
+    has passed (weekends skipped; US holidays are not)."""
+    now = now or pd.Timestamp.now(tz="America/New_York")
+    this_month = now.normalize().replace(day=1)
+    review = _month_review(this_month)
+    return review if now < review else _month_review(this_month + pd.offsets.MonthBegin(1))
 
 
 # ---------- market crash monitor ----------
 CRASH_STATE = config.LOG_DIR / "market_crash_state.json"
 CORRECTION, BEAR, SHARP_DAY = -0.10, -0.20, -0.04
+RECOVER_BAND = 0.01  # leave a correction / bear market only 1 point above its line
 
 
 def market_status(spy_live=None):
     """Where the US market (SPY) stands: vs its 1-year high, its 200-day average, and today's move."""
     c = history("SPY")
+    ny = pd.Timestamp.now(tz="America/New_York")
+    if str(c.index[-1].date()) == ny.strftime("%Y-%m-%d") and ny.hour < 16:
+        c = c.iloc[:-1]  # Yahoo's bar for a session still trading is not a close
     px = spy_live or float(c.iloc[-1])
     high = max(float(c.tail(252).max()), px)
     avg200 = float(c.tail(200).mean())
     dd, day = px / high - 1, px / float(c.iloc[-1]) - 1 if spy_live else float(c.iloc[-1] / c.iloc[-2] - 1)
     level = "Bear market" if dd <= BEAR else "Correction" if dd <= CORRECTION else "Normal"
     return {"price": px, "from_high": dd, "high": high, "avg200": avg200, "above_200d": px > avg200,
-            "today": day, "level": level}
+            "close": float(c.iloc[-1]), "close_above_200d": float(c.iloc[-1]) > avg200, "today": day,
+            "level": level}
 
 
 def crash_check(notify_fn, spy_live):
@@ -336,22 +347,31 @@ def crash_check(notify_fn, spy_live):
         state = {"level": "Normal", "above_200d": True, "sharp_day": None}
     msgs = []
     order = ["Normal", "Correction", "Bear market"]
-    if order.index(s["level"]) > order.index(state.get("level", "Normal")):
-        msgs.append(f"{s['level']}: the S&P 500 (SPY ${s['price']:,.2f}) is {s['from_high']:.1%} below its 1-year high.")
-    elif s["level"] == "Normal" and state.get("level") != "Normal":
+    prev = state.get("level", "Normal")
+    level = s["level"]
+    # A level is left only once the price is RECOVER_BAND past its line, so prices wiggling around -10% or -20%
+    # don't alert every minute.
+    if order.index(level) < order.index(prev):
+        line = BEAR if prev == "Bear market" else CORRECTION
+        if s["from_high"] < line + RECOVER_BAND:
+            level = prev
+    if order.index(level) > order.index(prev):
+        msgs.append(f"{level}: the S&P 500 (SPY ${s['price']:,.2f}) is {s['from_high']:.1%} below its 1-year high.")
+    elif level == "Normal" and prev != "Normal":
         msgs.append(f"Recovered: the S&P 500 is back within 10% of its high ({s['from_high']:.1%}).")
-    if s["above_200d"] != state.get("above_200d", True):
-        msgs.append(f"The S&P 500 is now {'above' if s['above_200d'] else 'below'} its 200-day average "
+    # The 200-day line is judged on daily closes, as the tested rule does, not on the live price.
+    if s["close_above_200d"] != state.get("above_200d", True):
+        msgs.append(f"The S&P 500 closed {'above' if s['close_above_200d'] else 'below'} its 200-day average "
                     f"(${s['avg200']:,.2f}).")
     today = pd.Timestamp.now(tz="America/New_York").strftime("%Y-%m-%d")
     if s["today"] <= SHARP_DAY and state.get("sharp_day") != today:
         msgs.append(f"Sharp drop: the S&P 500 is {s['today']:+.1%} today.")
         state["sharp_day"] = today
-    state.update(level=s["level"], above_200d=s["above_200d"])
+    state.update(level=level, above_200d=s["close_above_200d"])
     with config.atomic(CRASH_STATE) as tmp:
         tmp.write_text(json.dumps(state))
     if msgs:
-        notify_fn("Market warning: " + s["level"], "\n".join(msgs) + "\nWhat testing found: selling everything at "
+        notify_fn("Market warning: " + level, "\n".join(msgs) + "\nWhat testing found: selling everything at "
                   "such points cut the worst fall in 2020/2022 (-46% vs -59%) but missed the 2023-2026 rebound. The "
                   "tested rule sells a stock when it closes a month below its 200-day average. Check your risk limit.")
     return msgs, s

@@ -204,25 +204,43 @@ class LiveService:
                 for r in done.itertuples() if len(done) else []:
                     log(f"    {tag} (live): {r.side} {r.symbol} {r.quantity:.6f} at {r.price:,.4f} "
                         f"(${r.total:,.2f}) - {r.reason}")
-            self.stock_close()
-            self.market_crash_check()
-            self.grid_check()
-            hour = time.strftime("%Y%m%d%H", time.gmtime())
-            if hour != self._paper_hour:  # balance history: one point an hour
-                self._paper_hour = hour
-                self.stock_jobs()
-                for book in paper.BOOKS:
-                    if not paper.is_open(book):
-                        continue
-                    paper.snapshot(book=book)
-                    news = paper.milestones(lambda title, body: notify.send(title, body), book=book)
-                    if news:
-                        log(f"    PAPER {book.key.upper()}: {news}")
             self._preview_failing = False
         except Exception as e:
             if not self._preview_failing:  # log the first failure of a run of them, not one per minute
                 log(f"live preview failed ({type(e).__name__}: {e}); will keep trying every minute")
             self._preview_failing = True
+        # Each job below has its own error handling, so a failed preview never skips them.
+        for job in (self.stock_close, self.market_crash_check, self.grid_check):
+            try:
+                job()
+                self.__dict__.get("_job_failing", {}).pop(job.__name__, None)
+            except Exception:
+                self._log_once(job.__name__, traceback.format_exc())
+        hour = time.strftime("%Y%m%d%H", time.gmtime())
+        if hour != self._paper_hour:  # balance history: one point an hour
+            self._paper_hour = hour
+            for job in (self.stock_jobs, self.crypto_pick_news, self.paper_snapshots):
+                try:
+                    job()
+                    self.__dict__.get("_job_failing", {}).pop(job.__name__, None)
+                except Exception:
+                    self._log_once(job.__name__, traceback.format_exc())
+
+    def _log_once(self, name, text):
+        """Log a job's failure once per run of failures, not every minute."""
+        failing = self.__dict__.setdefault("_job_failing", {})
+        if failing.get(name) != text.splitlines()[-1]:
+            log(f"{name} failed:\n{text}")
+            failing[name] = text.splitlines()[-1]
+
+    def paper_snapshots(self):
+        for book in paper.BOOKS:
+            if not paper.is_open(book):
+                continue
+            paper.snapshot(book=book)
+            news = paper.milestones(lambda title, body: notify.send(title, body), book=book)
+            if news:
+                log(f"    PAPER {book.key.upper()}: {news}")
 
     def stock_jobs(self):
         """Hourly: the stock paper trial's balance point and weekly updates, and a news check on the top pick."""
@@ -258,7 +276,6 @@ class LiveService:
                     tmp.write_text(json.dumps(state, indent=1))
         except Exception as e:
             log(f"top pick news check failed ({type(e).__name__}: {e})")
-        self.crypto_pick_news()
 
     def crypto_pick_news(self):
         """Hourly: refresh the crypto top picks (top coins, altcoins; re-picked at the monthly review or when the
@@ -266,7 +283,7 @@ class LiveService:
         today = time.strftime("%Y-%m-%d", time.gmtime())
         for group, symbols in (("main", config.SYMBOLS), ("alts", altcoins.WATCH)):
             try:
-                pick, _, state = cryptopick.held_top_pick(group, cryptopick.trend_table(symbols))
+                pick, _, state = cryptopick.held_top_pick(group, symbols)
                 if pick is None or state.get("news_alert_day") == today:
                     continue
                 s = pick["symbol"]

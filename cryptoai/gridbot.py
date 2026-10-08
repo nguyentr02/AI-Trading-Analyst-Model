@@ -33,7 +33,7 @@ def save_bots(bots):
 
 def levels(bot):
     lo, hi, n = float(bot["lower"]), float(bot["upper"]), int(bot["grids"])
-    if bot.get("type", "arithmetic").lower().startswith("geo"):
+    if str(bot.get("type") or "arithmetic").lower().startswith("geo"):
         return lo * (hi / lo) ** (np.arange(n + 1) / n)
     return np.linspace(lo, hi, n + 1)
 
@@ -54,6 +54,10 @@ def status(bot, price):
                 f"level and is just holding the coin, no grid profit until the price is back above "
                 f"{lv[0]:,.4f}", "distance": price / lv[0] - 1}
     if price > lv[-1]:
+        if bot.get("trailing_up"):
+            return {"where": "above", "distance": price / lv[-1] - 1,
+                    "text": f"above the range by {price / lv[-1] - 1:.1%}: with Trailing Up on, Binance moves the "
+                            "range up behind the price; update the range here (Edit settings) to match the bot"}
         return {"where": "above", "text": f"above the range by {price / lv[-1] - 1:.1%}: the bot has sold "
                 f"everything and holds cash, no grid profit until the price is back below {lv[-1]:,.4f}",
                 "distance": price / lv[-1] - 1}
@@ -65,10 +69,13 @@ def status(bot, price):
 
 
 def replay(bot, candles, invest=1000.0, fee=config.FEE):
-    """Run the grid on past candles (high/low path: down first on a red candle, up first on a green one).
+    """Run the grid on past candles (path within a candle: a red candle visits its high first then its low, a
+    green candle its low first then its high).
 
     Starts at the first candle's open like Binance: the grids above the price are bought at the start (so they can
     sell on the way up), the ones below wait to buy. Returns totals and the round trips per day."""
+    if candles is None or not len(candles):
+        return None
     lv = levels(bot)
     n = len(lv) - 1
     per = invest / n
@@ -111,8 +118,10 @@ def backtest(bot, days=(1, 3, 7, 30)):
     c = data.drop_open_candle(data.load_cached(bot["symbol"], "15m"), "15m")
     rows = []
     for d in days:
-        part = c[c.index >= c.index[-1] - pd.Timedelta(days=d)]
+        part = c[c.index >= c.index[-1] - pd.Timedelta(days=d)] if len(c) else c
         r = replay(bot, part, invest=float(bot.get("invest") or 1000.0))
+        if r is None:
+            continue
         rows.append({"Last": f"{d} days", "Grid return": r["return"], "Grid profit only": r["grid_profit"]
                      / float(bot.get("invest") or 1000.0), "Hold the coin": r["hold_return"],
                      "Round trips": r["round_trips"], "Per day": r["per_day"], "Time in range": r["in_range"]})
@@ -128,6 +137,8 @@ def suggest_range(bot, price):
     """A new range around today's price: the last 7 days' low and high (including the price now) plus 3% either
     side, with grids about 1% apart. A rule of thumb from recent swings, not a tested setting."""
     c = data.drop_open_candle(data.load_cached(bot["symbol"], "15m"), "15m")
+    if not len(c):
+        return None
     week = c[c.index >= c.index[-1] - pd.Timedelta("7D")]
     lo, hi = min(float(week["low"].min()), price) * 0.97, max(float(week["high"].max()), price) * 1.03
     n = int(max(5, min(100, round(np.log(hi / lo) / np.log(1 + TARGET_STEP)))))
@@ -163,11 +174,11 @@ def advice(bot, price, outside_hours=0.0, reading=None):
         if s["where"] == "below" or not bot.get("trailing_up"):
             new = suggest_range(bot, price)
             side = "below" if s["where"] == "below" else "above"
+            hint = (f"Suggested new range: {new['lower']}-{new['upper']} with {new['grids']} grids (about 1% apart; "
+                    "last 7 days' low and high plus 3%; a rule of thumb, not a tested setting). ") if new else ""
             out.append(("new_range", f"{coin} grid bot: consider a new range",
                         f"The price ({price:,.4f}) has been {side} your range ({bot['lower']}-{bot['upper']}) for "
-                        f"{outside_hours:.0f} hours, so the bot is not trading. Suggested new range: "
-                        f"{new['lower']}-{new['upper']} with {new['grids']} grids (about 1% apart; last 7 days' low "
-                        f"and high plus 3%; a rule of thumb, not a tested setting). {keep}"))
+                        f"{outside_hours:.0f} hours, so the bot is not trading. {hint}{keep}"))
     if reading and reading.get("above_50d") is False:
         out.append(("trend_down", f"{coin} grid bot: {coin} is in a downtrend",
                     f"{coin}'s daily close is below its 50-day average ({reading['from_50d']:+.0%}). The tested 50-day "
@@ -188,51 +199,78 @@ def advice(bot, price, outside_hours=0.0, reading=None):
     return out
 
 
+CONFIRM_MINUTES = 5  # a new range status must last this long before it is alerted (no alert per price wiggle)
+
+
 def _bot_state(state, key):
     v = state.get(key)
     return v if isinstance(v, dict) else {"tag": v} if v else {}
 
 
+def _save_state(state):
+    with config.atomic(STATE_FILE) as tmp:
+        tmp.write_text(json.dumps(state, indent=2))
+
+
 def check(notify_fn, prices=None):
     """Every minute in the live service: alert when a bot's price leaves its range, nears an edge, or comes back,
-    and when something about the bot should change (advice). Each suggestion is sent when it starts to apply and
-    repeated every REMIND_HOURS while it still does."""
+    and when something about the bot should change (advice). A new status is alerted only after it has lasted
+    CONFIRM_MINUTES. Each suggestion is sent when it starts to apply and repeated every REMIND_HOURS while it
+    still does. State is saved before each alert, and one bot's error never blocks the others."""
     bots = load_bots()
     if not bots:
         return []
     prices = prices or data.prices(list({b["symbol"] for b in bots}))
-    state = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
+    try:
+        state = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
+    except ValueError:
+        state = {}
     now = pd.Timestamp.now(tz="UTC")
-    msgs = []
+    msgs, errors = [], []
     for b in bots:
-        key = f"{b['symbol']} {b['lower']}-{b['upper']}"
-        st = _bot_state(state, key)
-        first_seen = key not in state
-        px = float(prices[b["symbol"]])
-        s = status(b, px)
-        coin = b["symbol"].split("/")[0]
-        tag = s["where"] + (f" ({s['near']})" if s.get("near") else "")
-        if st.get("tag") != tag:
-            if not first_seen or s["where"] != "in range":  # no alert for a bot first seen in range
-                msg = f"{coin} grid bot ({b['lower']}-{b['upper']}): price {px:,.4f} is {s['text']}."
-                notify_fn(f"{coin} grid bot: {tag}", msg)
+        try:
+            key = f"{b['symbol']} {b['lower']}-{b['upper']}"
+            st = _bot_state(state, key)
+            state[key] = st
+            px = float(prices[b["symbol"]])
+            s = status(b, px)
+            coin = b["symbol"].split("/")[0]
+            tag = s["where"] + (f" ({s['near']})" if s.get("near") else "")
+            msg = f"{coin} grid bot ({b['lower']}-{b['upper']}): price {px:,.4f} is {s['text']}."
+            alert = False
+            if "tag" not in st:  # first seen: alert only if it is outside the range
+                st["tag"] = tag
+                alert = s["where"] != "in range"
+            elif tag == st["tag"]:
+                st.pop("pending", None)
+            elif st.get("pending", {}).get("tag") != tag:
+                st["pending"] = {"tag": tag, "since": now.isoformat(timespec="seconds")}
+            elif (now - pd.Timestamp(st["pending"]["since"])).total_seconds() >= CONFIRM_MINUTES * 60:
+                st["tag"] = tag
+                st.pop("pending", None)
+                alert = True
+            if st["tag"].startswith("in range"):
+                st.pop("outside_since", None)
+            else:
+                st.setdefault("outside_since", now.isoformat(timespec="seconds"))
+            _save_state(state)  # saved before sending: an error later never repeats this alert
+            if alert:
+                notify_fn(f"{coin} grid bot: {st['tag']}", msg)
                 msgs.append(msg)
-            st["tag"] = tag
-        if s["where"] == "in range":
-            st.pop("outside_since", None)
-        else:
-            st.setdefault("outside_since", now.isoformat(timespec="seconds"))
-        outside = (now - pd.Timestamp(st["outside_since"])).total_seconds() / 3600 if "outside_since" in st else 0.0
-        sent = st.get("advice_sent", {})
-        active = advice(b, px, outside)
-        for k, title, text in active:
-            last = sent.get(k)
-            if last is None or (now - pd.Timestamp(last)).total_seconds() >= REMIND_HOURS * 3600:
+            outside = (now - pd.Timestamp(st["outside_since"])).total_seconds() / 3600 if "outside_since" in st else 0.0
+            sent = st.get("advice_sent", {})
+            active = advice(b, px, outside)
+            st["advice_sent"] = {k: v for k, v in sent.items() if k in {a[0] for a in active}}  # re-alert if it returns
+            due = [(k, title, text) for k, title, text in active
+                   if k not in sent or (now - pd.Timestamp(sent[k])).total_seconds() >= REMIND_HOURS * 3600]
+            for k, _, _ in due:
+                st["advice_sent"][k] = now.isoformat(timespec="seconds")
+            _save_state(state)
+            for _, title, text in due:
                 notify_fn(title, text)
                 msgs.append(text)
-                sent[k] = now.isoformat(timespec="seconds")
-        st["advice_sent"] = {k: v for k, v in sent.items() if k in {a[0] for a in active}}  # re-alert if it returns
-        state[key] = st
-    with config.atomic(STATE_FILE) as tmp:
-        tmp.write_text(json.dumps(state, indent=2))
+        except Exception as e:
+            errors.append(f"{b.get('symbol')}: {type(e).__name__}: {e}")
+    if errors:
+        raise RuntimeError("; ".join(errors))
     return msgs

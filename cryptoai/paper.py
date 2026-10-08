@@ -560,16 +560,23 @@ Read this as a live sanity check of the backtests, not as proof. Trades and hour
     return path
 
 
+def _times(df):
+    """Parse the time column; the files mix 'YYYY-MM-DD HH:MM:SS+00:00' (backfilled rows) and ISO 'T' times."""
+    if "time" in df:
+        df["time"] = pd.to_datetime(df["time"], utc=True, format="ISO8601")
+    return df
+
+
 def trades(book=MAIN):
     if not book.trades.exists():
         return pd.DataFrame(columns=TRADE_COLUMNS)
-    return pd.read_csv(book.trades, parse_dates=["time"])
+    return _times(pd.read_csv(book.trades))
 
 
 def balance_history(book=MAIN):
     if not book.balance.exists():
         return pd.DataFrame()
-    return pd.read_csv(book.balance, parse_dates=["time"])
+    return _times(pd.read_csv(book.balance))
 
 
 def _none():

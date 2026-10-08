@@ -168,7 +168,8 @@ def step(force=False, note=""):
                 _sell_all(acct, account, t, prices[t], why + note)
     # The buy-for-hold list: rebalance at the start and at each month's last US close.
     ny_today = pd.Timestamp.now(tz="America/New_York").normalize()
-    if acct.get("buylist_review") is None or stocks.next_review().normalize() == ny_today:
+    # Compared with the latest review that has passed, so a review handled late (after downtime) still rebalances.
+    if acct.get("buylist_review") is None or acct["buylist_review"] < str(stocks.last_review_day().date()):
         _rebalance_buylist(acct, prices)
         acct["buylist_review"] = str(ny_today.date())
     acct["last_day"] = day
@@ -215,12 +216,19 @@ def snapshot(acct=None, prices=None):
     pd.DataFrame([row]).to_csv(BALANCE, mode="a", header=not BALANCE.exists(), index=False)
 
 
+def _times(df):
+    """Parse the time column; the files mix 'YYYY-MM-DD HH:MM:SS+00:00' (backfilled rows) and ISO 'T' times."""
+    if "time" in df:
+        df["time"] = pd.to_datetime(df["time"], utc=True, format="ISO8601")
+    return df
+
+
 def trades():
-    return pd.read_csv(TRADES, parse_dates=["time"]) if TRADES.exists() else pd.DataFrame(columns=COLUMNS)
+    return _times(pd.read_csv(TRADES)) if TRADES.exists() else pd.DataFrame(columns=COLUMNS)
 
 
 def balance_history():
-    return pd.read_csv(BALANCE, parse_dates=["time"]) if BALANCE.exists() else pd.DataFrame()
+    return _times(pd.read_csv(BALANCE)) if BALANCE.exists() else pd.DataFrame()
 
 
 def milestones(notify_fn):

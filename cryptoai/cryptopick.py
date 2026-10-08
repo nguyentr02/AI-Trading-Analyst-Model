@@ -55,10 +55,12 @@ def next_review():
     return last_review() + pd.offsets.MonthBegin(1)
 
 
-def held_top_pick(group, table):
-    """(held pick, today's best, state). Held until the next monthly review; switching daily did worse for stocks
-    and is not tested better for crypto, so the daily check is only reported. Re-picked early if the held coin
-    falls below its 50-day average (the rule itself would sell it)."""
+def held_top_pick(group, symbols, live_table=None):
+    """(held pick, today's best, state). Decided on daily closes only, like the tested rule, so an intraday dip
+    never changes it. Held until the next monthly review; re-picked early if the held coin closes below its 50-day
+    average (the rule itself would sell it). No pick (None) while no coin is above its average. The rows returned
+    come from `live_table` (live prices, for display) when given."""
+    table = trend_table(symbols)
     best = top_pick(table)
     try:
         all_state = json.loads(STATE.read_text())
@@ -73,8 +75,13 @@ def held_top_pick(group, table):
         all_state[group] = state
         with config.atomic(STATE) as tmp:
             tmp.write_text(json.dumps(all_state, indent=1))
-    held = table[table["symbol"] == state.get("symbol")] if len(table) else table
-    return (held.iloc[0] if len(held) else best), best, state
+    if best is None or state.get("symbol") not in still_in:
+        return None, None, state
+
+    def row(sym):
+        src = live_table if live_table is not None and len(live_table) and sym in set(live_table["symbol"]) else table
+        return src[src["symbol"] == sym].iloc[0]
+    return row(state["symbol"]), row(best["symbol"]), state
 
 
 def portfolio_actions(holdings, table, live=None):

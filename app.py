@@ -395,7 +395,8 @@ def local(t):
     """A UTC time (Timestamp, ISO string, Series or DatetimeIndex) in the chosen time zone."""
     zone = TIMEZONES[st.session_state.get("tz") or "UTC"]
     if isinstance(t, pd.Series):
-        t = pd.to_datetime(t, utc=True, format="ISO8601") if t.dtype == object else t
+        if not pd.api.types.is_datetime64_any_dtype(t):  # text (object or pandas 3 "str" dtype)
+            t = pd.to_datetime(t, utc=True, format="ISO8601")
         return (t.dt.tz_localize("UTC") if t.dt.tz is None else t).dt.tz_convert(zone)
     if isinstance(t, pd.DatetimeIndex):
         return (t.tz_localize("UTC") if t.tz is None else t).tz_convert(zone)
@@ -405,6 +406,8 @@ def local(t):
 
 def when(t, fmt="%b %d, %H:%M"):
     """A time formatted for display with its zone, e.g. 'Oct 06, 14:00 Vietnam time'."""
+    if t is None or (not isinstance(t, (pd.Series, pd.DatetimeIndex)) and pd.isna(pd.Timestamp(t or None))):
+        return "–"
     return f"{local(t):{fmt}} {tz_label()}"
 
 
@@ -614,7 +617,7 @@ def crypto_stance(group, symbols):
     if acts:
         st.warning("**Your portfolio:** " + "; ".join(f"{a} {coin(x)} ({why})" for x, a, why in acts)
                    + ". Details on Portfolio.", icon=":material/account_balance_wallet:")
-    pick, best, _ = cryptopick.held_top_pick(group, t)
+    pick, best, _ = cryptopick.held_top_pick(group, symbols, t)
     if pick is None:
         return
     rec = cryptopick.RECORD
@@ -643,7 +646,7 @@ def crypto_stance(group, symbols):
                 for r in pick_news.head(3).itertuples():
                     st.markdown(f"- [{r.title}]({r.link}) ({r.score:+.2f})")
         st.caption(f"The strongest 90-day climber ({pick['mom90']:+.0%}) among the coins above their 50-day average; "
-                   f"{pick['from_50d']:+.0%} above its sell-if-below line ({price_text(pick['ma50'])}). Of four ways "
+                   f"{line_text(pick['from_50d'], pick['ma50'], False, 'if the day closes below it')}. Of four ways "
                    f"to pick one coin, this was best on 2022-2024, yet it trailed the 50-day rule on all coins "
                    f"({rec['pick_2224']:+.0%} vs {rec['list_2224']:+.0%}); on 2025-2026 it made "
                    f"{rec['pick_2526']:+.0%} vs {rec['list_2526']:+.0%}, but with a worst fall of "
@@ -867,6 +870,8 @@ def coin(sym):
 
 def price_text(x):
     """A price with enough decimals for its size: 85,592.10 / 2.1340 / 0.006327."""
+    if x is None or pd.isna(x):
+        return "–"
     decimals = 2 if x >= 100 else 4 if x >= 1 else max(4, 3 - int(np.floor(np.log10(x)))) if x > 0 else 2
     return f"{x:,.{decimals}f}"
 
@@ -888,10 +893,15 @@ def page_chart():
 @st.fragment(run_every=2)
 def price_header(sym):
     """Exchange-style header: pair, big live price, 24h change and a stats strip."""
-    tk = live_feed().tickers()
-    if tk is None:
-        tk = get_tickers()
-    t = tk.set_index("symbol").loc[sym]
+    try:
+        tk = live_feed().tickers()
+        if tk is None:
+            tk = get_tickers()
+        t = tk.set_index("symbol").loc[sym]
+    except Exception:
+        st.warning(f"No live price for {coin(sym)} right now (no connection to Binance); retrying.",
+                   icon=":material/cloud_off:")
+        return
     try:
         cap = get_coingecko().set_index("symbol").loc[sym, "market_cap"]
     except Exception:
@@ -1445,11 +1455,30 @@ def _ai_column(book):
     return out
 
 
+def _book_prices(book):
+    """Live prices for a paper book; any coin Binance doesn't answer for falls back to its last saved 15-minute
+    close, with a note, so the page never breaks while offline."""
+    try:
+        prices = _live_prices() if book is paper.MAIN else _alt_prices(book.symbols)
+    except Exception:
+        prices = {}
+    missing = [s for s in book.symbols if prices.get(s) is None]
+    for s in missing:
+        try:
+            prices[s] = float(data.load_cached(s, "15m")["close"].iloc[-1])
+        except Exception:
+            prices[s] = 0.0
+    if missing:
+        st.caption(f":material/cloud_off: No live price from Binance for {', '.join(coin(s) for s in missing)}; "
+                   "showing the last saved price.")
+    return prices
+
+
 @st.fragment(run_every=10)
 def paper_dashboard(book_key="main"):
     book = BOOKS[book_key]
     acct = paper.load(book)
-    prices = _live_prices() if book is paper.MAIN else _alt_prices(book.symbols)
+    prices = _book_prices(book)
     v = paper.value(acct, prices)
     start, names = acct["start_cash"], acct["names"]
     opened, ends = pd.Timestamp(acct["opened"]), pd.Timestamp(acct["ends"])
@@ -1613,77 +1642,113 @@ def get_grid_backtest(bot_json, version):
 @st.fragment(run_every=30)
 def grid_bots_panel():
     """Your Binance grid bots (grid_bots.json): where the price is against the range, and how the exact settings
-    would have done lately. Read-only: nothing here changes the bot on Binance."""
-    import json as _json
+    would have done lately. Read-only: nothing here changes the bot on Binance. One bot's problem (bad settings,
+    no price) never hides the others or its own Edit button."""
     bots = gridbot.load_bots()
-    if not bots:
-        return
     for i, b in enumerate(bots):
-        sym = b["symbol"]
-        try:
-            px = float(get_crypto_prices((sym,))[sym])
-        except Exception:
-            continue
-        s = gridbot.status(b, px)
-        lo_p, hi_p = gridbot.profit_per_grid(b)
         with st.container(border=True):
-            line = st.container(horizontal=True, vertical_alignment="center", gap="small")
-            line.markdown(f"**Your {coin(sym)} grid bot** · {b['lower']}–{b['upper']} · {b['grids']} grids "
-                          f"({b.get('type', 'arithmetic')})", width="content")
-            color = {"in range": "green", "below": "red", "above": "orange"}[s["where"]]
-            line.badge(s["where"] + (f", {s['near']}" if s.get("near") else ""), color=color)
-            msg = f"Price {price_text(px)}: {s['text']}."
-            (st.error if s["where"] == "below" else st.warning if s["where"] == "above" or s.get("near")
-             else st.info)(msg)
             try:
-                gstate = _json.loads(gridbot.STATE_FILE.read_text()).get(f"{sym} {b['lower']}-{b['upper']}", {})
-                since = gstate.get("outside_since") if isinstance(gstate, dict) else None
-                hours = (pd.Timestamp.now(tz="UTC") - pd.Timestamp(since)).total_seconds() / 3600 if since else 0.0
-                for _, title, text in gridbot.advice(b, px, hours):
-                    st.warning(f"**{title.split(': ', 1)[-1].capitalize()}.** {text}", icon=":material/build:")
-            except Exception:
-                pass
-            reading = (altcoins.load() or {}).get("coins", {}).get(sym, {})
-            notes = [f"Each round trip earns {lo_p:.2%}–{hi_p:.2%} of one grid's money after Binance's 0.1% fees."]
-            if reading:
-                trend = "above" if reading["above"]["50"] else "below"
-                notes.append(f"{coin(sym)} is {reading['from_50d']:+.0%} from its 50-day average ({trend} it)"
-                             + (f"; drop warning {reading['p_drop']:.0%}" if reading.get("p_drop") is not None else "")
-                             + ".")
-                if abs(reading["from_50d"]) > 0.15:
-                    notes.append("A grid earns most when the price swings sideways inside the range; in a strong "
-                                 "trend like this the price tends to leave the range (below it the bot just holds the "
-                                 "coin, above it the bot holds only cash).")
-            st.caption(" ".join(notes))
-            try:
-                bt = get_grid_backtest(_json.dumps(b), data_version([gridbot.BOTS_FILE]))
-                table(bt.style.format({"Grid return": "{:+.1%}", "Grid profit only": "{:+.1%}",
-                                       "Hold the coin": "{:+.1%}", "Per day": "{:.1f}", "Time in range": "{:.0%}"}),
-                      hide_index=True, width="stretch", alt=f"{coin(sym)} grid replay")
-                st.caption("These exact settings replayed on Binance 15-minute candles over recent windows, after "
-                           "fees, starting at that window's price (like a new bot). *Grid return* = whole bot "
-                           "including price moves of the coin it holds; *Grid profit only* = Binance's 'grid "
-                           "profit'. Past windows only show how the range fits recent prices, not what comes next.")
+                grid_bot_body(b)
             except Exception as e:
-                st.caption(f"Replay unavailable: {e}")
-            with st.popover("Edit settings", icon=":material/tune:",
-                            help="Change these whenever you change the bot on Binance, so the alerts match it."):
-                with st.form(f"grid_{i}"):
-                    lo = st.number_input("Lower price", value=float(b["lower"]), format="%.4f", step=0.001)
-                    hi = st.number_input("Upper price", value=float(b["upper"]), format="%.4f", step=0.001)
-                    n = st.number_input("Number of grids", value=int(b["grids"]), min_value=2, max_value=300)
-                    kind = st.selectbox("Type", ["arithmetic", "geometric"],
-                                        index=0 if b.get("type", "arithmetic").startswith("ar") else 1)
-                    inv = st.number_input("Money in the bot (USDT, for the replay)", value=float(b.get("invest") or 1000),
-                                          min_value=10.0, step=50.0)
-                    stop = st.number_input("Stop loss price (0 = none)", value=float(b.get("stop_loss") or 0.0),
-                                           min_value=0.0, format="%.4f", step=0.001)
-                    trail = st.checkbox("Trailing up enabled", value=bool(b.get("trailing_up")))
-                    if st.form_submit_button("Save") and hi > lo:
-                        bots[i] = {**b, "lower": lo, "upper": hi, "grids": int(n), "type": kind, "invest": inv,
-                                   "stop_loss": stop or None, "trailing_up": trail}
-                        gridbot.save_bots(bots)
-                        st.rerun()
+                st.error(f"Could not read the {b.get('symbol', '?')} grid bot ({type(e).__name__}: {e}). Check its "
+                         "settings below.", icon=":material/error:")
+            grid_bot_editor(i, b, bots)
+
+
+def _grid_state(b):
+    """This bot's saved alert state ({} if the live service hasn't seen it yet)."""
+    import json as _json
+    try:
+        v = _json.loads(gridbot.STATE_FILE.read_text()).get(f"{b['symbol']} {b['lower']}-{b['upper']}", {})
+    except (OSError, ValueError):
+        return {}
+    return v if isinstance(v, dict) else {}
+
+
+def grid_bot_body(b):
+    import json as _json
+    sym = b["symbol"]
+    line = st.container(horizontal=True, vertical_alignment="center", gap="small")
+    line.markdown(f"**Your {coin(sym)} grid bot** · {b['lower']}–{b['upper']} · {b['grids']} grids "
+                  f"({b.get('type') or 'arithmetic'})", width="content")
+    try:
+        px = float(get_crypto_prices((sym,))[sym])
+    except Exception:
+        st.warning("Live price unavailable (no connection to Binance); trying again in 30 seconds.",
+                   icon=":material/cloud_off:")
+        return
+    s = gridbot.status(b, px)
+    lo_p, hi_p = gridbot.profit_per_grid(b)
+    color = {"in range": "green", "below": "red", "above": "orange"}[s["where"]]
+    line.badge(s["where"] + (f", {s['near']}" if s.get("near") else ""), color=color)
+    msg = f"Price {price_text(px)}: {s['text']}."
+    (st.error if s["where"] == "below" else st.warning if s["where"] == "above" or s.get("near") else st.info)(msg)
+    since = _grid_state(b).get("outside_since")
+    hours = (pd.Timestamp.now(tz="UTC") - pd.Timestamp(since)).total_seconds() / 3600 if since else 0.0
+    try:
+        for _, title, text in gridbot.advice(b, px, hours):
+            st.warning(f"**{title.split(': ', 1)[-1].capitalize()}.** {text}", icon=":material/build:")
+    except Exception as e:
+        st.caption(f"Change suggestions unavailable ({type(e).__name__}: {e}).")
+    reading = (altcoins.load() or {}).get("coins", {}).get(sym, {})
+    notes = [f"Each round trip earns {lo_p:.2%}–{hi_p:.2%} of one grid's money after Binance's 0.1% fees."]
+    if reading:
+        trend = "above" if reading["above"]["50"] else "below"
+        notes.append(f"{coin(sym)} is {reading['from_50d']:+.0%} from its 50-day average ({trend} it)"
+                     + (f"; drop warning {reading['p_drop']:.0%}" if reading.get("p_drop") is not None else "") + ".")
+        if abs(reading["from_50d"]) > 0.15:
+            notes.append("A grid earns most when the price swings sideways inside the range; in a strong trend like "
+                         "this the price tends to leave the range (below it the bot just holds the coin, above it the "
+                         "bot holds only cash).")
+    st.caption(" ".join(notes))
+    try:
+        bt = get_grid_backtest(_json.dumps(b), data_version([gridbot.BOTS_FILE]))
+        table(bt.style.format({"Grid return": "{:+.1%}", "Grid profit only": "{:+.1%}", "Hold the coin": "{:+.1%}",
+                               "Per day": "{:.1f}", "Time in range": "{:.0%}"}),
+              hide_index=True, width="stretch", alt=f"{coin(sym)} grid replay")
+        st.caption("These exact settings replayed on Binance 15-minute candles over recent windows, after fees, "
+                   "starting at that window's price (like a new bot). *Grid return* = whole bot including price moves "
+                   "of the coin it holds; *Grid profit only* = Binance's 'grid profit'. Past windows only show how the "
+                   "range fits recent prices, not what comes next.")
+    except Exception as e:
+        st.caption(f"Replay unavailable: {e}")
+
+
+def grid_bot_editor(i, b, bots):
+    """Edit a bot's settings; refuses settings that can't be a Binance grid."""
+    with st.popover("Edit settings", icon=":material/tune:",
+                    help="Change these whenever you change the bot on Binance, so the alerts match it."):
+        with st.form(f"grid_{i}"):
+            ref = float(b.get("lower") or 1.0)
+            step = 10.0 ** (np.floor(np.log10(ref)) - 3) if ref > 0 else 0.0001
+            fmt = "%.8f" if ref < 0.01 else "%.6f" if ref < 1 else "%.4f"
+            lo = st.number_input("Lower price", value=float(b.get("lower") or 0.0), min_value=0.0, format=fmt, step=step)
+            hi = st.number_input("Upper price", value=float(b.get("upper") or 0.0), min_value=0.0, format=fmt, step=step)
+            n = st.number_input("Number of grids", value=int(b.get("grids") or 10), min_value=2, max_value=300)
+            kind = st.selectbox("Type", ["arithmetic", "geometric"],
+                                index=0 if str(b.get("type") or "arithmetic").startswith("ar") else 1)
+            inv = st.number_input("Money in the bot (USDT, for the replay)", value=float(b.get("invest") or 1000),
+                                  min_value=10.0, step=50.0)
+            stop = st.number_input("Stop loss price (0 = none)", value=float(b.get("stop_loss") or 0.0),
+                                   min_value=0.0, format=fmt, step=step)
+            trail = st.checkbox("Trailing up enabled", value=bool(b.get("trailing_up")))
+            if st.form_submit_button("Save"):
+                new = {**b, "lower": lo, "upper": hi, "grids": int(n), "type": kind, "invest": inv,
+                       "stop_loss": stop or None, "trailing_up": trail}
+                problems = []
+                if not 0 < lo < hi:
+                    problems.append("the lower price must be above 0 and below the upper price")
+                if stop and stop >= lo:
+                    problems.append("the stop loss must be below the lower price")
+                if not problems and gridbot.profit_per_grid(new)[0] <= 0:
+                    problems.append("the grids are so close that a round trip would lose money after fees; use "
+                                    "fewer grids or a wider range")
+                if problems:
+                    st.error("Not saved: " + "; ".join(problems) + ".")
+                else:
+                    bots[i] = new
+                    gridbot.save_bots(bots)
+                    st.rerun()
 
 
 @st.cache_data(ttl=5, show_spinner=False)
@@ -1879,6 +1944,13 @@ def get_stock_analysis(version=None):
     return stocks.analyse_all()
 
 
+def stock_analysis():
+    """The latest stock analysis without the stocks whose history failed to load (their rows only hold an error).
+    Called inside the live fragments too, so a page left open picks up new closes."""
+    a = get_stock_analysis(stock_data_version())
+    return a[a["error"].isna()] if "error" in a else a
+
+
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
 def get_momentum_test(version=None):
     return stocks.momentum_test()
@@ -1992,17 +2064,16 @@ def stock_detail(row, live):
 
 def page_stock_signals():
     st.title("Stock signals")
-    ai = stockai.load()
     try:
-        a = get_stock_analysis(stock_data_version())
+        stock_analysis()
     except Exception as e:
         st.error(f"Could not load stock history: {e}")
         return
-    stock_buy_list(a)
+    stock_buy_list()
     market_monitor()
     stock_news()
     st.subheader("Every stock")
-    every_stock_table(a, ai)
+    every_stock_table()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -2011,8 +2082,9 @@ def get_stock_live_ai(prices, version):
 
 
 @st.fragment(run_every=60)
-def every_stock_table(a, ai):
+def every_stock_table():
     """Each stock's trends and the stock AI's reading, on the live Binance price (a provisional close for today)."""
+    a, ai = stock_analysis(), stockai.load()
     try:
         live = get_stock_prices()
     except Exception:
@@ -2066,6 +2138,14 @@ def every_stock_table(a, ai):
                "buy and when to add in steps, not to jump in and out.")
 
 
+def line_text(gap, line, dollar=True, sold="at the monthly review if still below"):
+    """'+5% above its sell-if-below line ($123.00)', or, when below it, when the rule sells it."""
+    price = f"${line:,.2f}" if dollar else price_text(line)
+    if gap >= 0:
+        return f"{gap:+.0%} above its sell-if-below line ({price})"
+    return f"{-gap:.0%} below its sell-if-below line ({price}): sold {sold}"
+
+
 def stock_stance(b):
     """The AI's verdict for right now: buy (in steps), or don't buy, plus what to sell or trim in your stocks."""
     n = int(b["in"].sum())
@@ -2105,8 +2185,9 @@ def stock_stance(b):
 
 
 @st.fragment(run_every=60)
-def stock_buy_list(a):
+def stock_buy_list():
     """Live 'buy for hold' recommendation: the tested monthly uptrend rule on today's Binance prices."""
+    a = stock_analysis()
     st.subheader("Buy for hold now", icon=":material/shopping_cart:")
     try:
         live = get_stock_prices()
@@ -2117,7 +2198,7 @@ def stock_buy_list(a):
     review = stocks.next_review().tz_convert("UTC")
     stock_stance(b)
     pick, best, pick_state = stocks.held_top_pick(b)
-    if pick is not None:
+    if pick is not None and n > 0:  # no top pick under a "don't buy stocks now" verdict
         rec = stocks.TOP_PICK_RECORD
         with st.container(border=True):
             line = st.container(horizontal=True, vertical_alignment="center", gap="small")
@@ -2144,8 +2225,7 @@ def stock_buy_list(a):
                     for r in pick_news.head(3).itertuples():
                         st.markdown(f"- [{r.title}]({r.link}) ({r.score:+.2f})")
             st.caption(f"The steadiest stock in the buy list: a typical yearly swing of {pick['vol']:.0%} and a worst "
-                       f"fall of {pick['worst_10y']:.0%} in 10 years; {pick['from_200d']:+.0%} above its sell-if-below "
-                       f"line (${pick['avg200']:,.2f}). Of four ways to pick one stock, this did best when tested on "
+                       f"fall of {pick['worst_10y']:.0%} in 10 years; {line_text(pick['from_200d'], pick['avg200'])}. Of four ways to pick one stock, this did best when tested on "
                        f"2021-2022 ({rec['pick_2122']:+.0%} vs {rec['list_2122']:+.0%} for the whole list, a bear "
                        f"market), but it lagged the whole list in 2023-2026 ({rec['pick_2326']:+.0%} vs "
                        f"{rec['list_2326']:+.0%}). No one-stock pick beat holding the whole list, so the list below is "
@@ -2156,7 +2236,7 @@ def stock_buy_list(a):
                 for rank, r in zip(("2nd", "3rd"), more.itertuples()):
                     close = " · close to its sell line" if r.from_200d < 0.05 else ""
                     st.markdown(f"**{rank} choice: {r.ticker} · {r.name}** at ${r.price:,.2f} · typical yearly swing "
-                                f"{r.vol:.0%} · {r.from_200d:+.0%} above its sell-if-below line (${r.avg200:,.2f})"
+                                f"{r.vol:.0%} · {line_text(r.from_200d, r.avg200)}"
                                 f"{close}")
                 st.caption(f"The next steadiest stocks in the buy list. The top 3 held in equal shares: "
                            f"{t3['top3_2122']:+.0%} in 2021-2022 (the whole list {rec['list_2122']:+.0%}) and "
@@ -2276,7 +2356,7 @@ def market_monitor():
 def page_stock_backtest():
     st.title("Stock backtest")
     try:
-        a = get_stock_analysis(stock_data_version()).set_index("ticker")
+        a = stock_analysis().set_index("ticker")
     except Exception as e:
         st.error(f"Could not load stock history: {e}")
         return
