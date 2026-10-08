@@ -80,7 +80,8 @@ AUTH_SESSIONS_FILE = ROOT / "auth_tokens.json"  # IDs (hashed) of the refresh to
 PUBLIC_URL_FILE = LOG_DIR / "public_url.txt"  # the tunnel's current public address
 # Live preview: the models re-run on the live price between candle closes (see cryptoai/preview.py).
 LIVE_PREVIEW = LOG_DIR / "live_preview.json"
-PREVIEW_EVERY = 60  # seconds  # ignore holdings and buys smaller than this (Binance's minimum order is about $5)
+PREVIEW_EVERY = 60  # seconds: altcoin readings, the paper AI's live step (it counts one reading a minute), minute jobs
+SIGNAL_EVERY = 15  # seconds: the top coins' live signals (Signals page)  # ignore holdings and buys smaller than this (Binance's minimum order is about $5)
 
 for d in (DATA_DIR, MODEL_DIR, LOG_DIR):
     d.mkdir(exist_ok=True)

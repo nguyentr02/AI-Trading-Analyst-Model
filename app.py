@@ -1,4 +1,5 @@
 """Dashboard. Run with:  .venv\\Scripts\\streamlit run app.py"""
+import time
 from pathlib import Path
 
 import numpy as np
@@ -146,6 +147,8 @@ def style(fig, height):
 
 # Explanations shown when hovering a table's column header. One meaning per name across the whole dashboard.
 COLUMN_HELP = {
+    "vs QQQ": "This account's return minus the return of simply holding QQQ (the Nasdaq-100 ETF) over the same time.",
+    "Stocks held": "How many different stocks the account holds right now.",
     # prices and markets
     "#": "Rank by market cap (CoinGecko).",
     "Coin": "The coin (or pair) this row is about.",
@@ -759,17 +762,35 @@ def drop_row(reading):
     st.progress(min(float(reading["p_drop"]), 1.0), text=f"P(sharp drop first) {reading['p_drop']:.0%}")
 
 
-@st.fragment(run_every=60)
+@st.cache_data(ttl=30, show_spinner=False)
+def get_offline_preview(slot):
+    """Live readings computed here while the live service is off (`slot` changes every 30 seconds)."""
+    return preview.compute()
+
+
+def live_readings():
+    """The top coins' live readings: from the service (every 15 seconds), or computed here if it is off."""
+    live_preview = preview.load()
+    if live_preview and preview.age_seconds(live_preview) <= 2 * 60:
+        return live_preview
+    if service_running():
+        return None  # the service is up but its readings are old (e.g. retraining); don't show stale numbers
+    try:
+        return get_offline_preview(int(time.time() // 30))
+    except Exception:
+        return None
+
+
+@st.fragment(run_every=15)
 def signal_board():
-    """Every coin's three predictions at once. Re-checks every minute so new signals appear by themselves."""
+    """Every coin's three predictions at once. Re-checks every 15 seconds, so live readings and new signals appear
+    by themselves."""
     names = [n for n in config.MODELS if model.load(n) is not None]
     if not names:
         st.error("No model yet. Run `train.bat`, or press **Retrain models** on the Backtest page.")
         return
     sigs = {n: get_signals(n, model_version(n)).set_index("symbol") for n in names}
-    live_preview = preview.load()
-    if live_preview and preview.age_seconds(live_preview) > 5 * 60:
-        live_preview = None  # the service has stopped updating it; don't show stale "live" numbers
+    live_preview = live_readings()
     drops = (droprisk.load() or {}).get("coins", {})
     look = outlook.load()
     try:
@@ -777,6 +798,13 @@ def signal_board():
     except Exception:
         headlines_now = {}
 
+    if live_preview:
+        age = preview.age_seconds(live_preview)
+        st.caption(f":material/update: Live readings from {age:.0f} s ago, refreshed every {config.SIGNAL_EVERY} s"
+                   + ("" if service_running() else " (computed here: the live service is off)") + ".")
+    else:
+        st.caption(":material/update_disabled: No live readings right now; showing the signals at the last candle "
+                   "close.")
     cards = st.columns(len(config.SYMBOLS), gap="medium")
     for card, sym in zip(cards, config.SYMBOLS):
         with card.container(border=True):
@@ -814,7 +842,7 @@ def signal_board():
                        f"{droprisk.CAUTION_AT:.0%}: in testing, not buying then helped. High from {droprisk.SELL_AT:.0%}: "
                        "selling then cut the worst drop from -40% to -32% on 2025-2026. Single warnings are often "
                        "wrong; it helps by avoiding the worst falls.")
-        st.caption("**Live now** is provisional: the models re-run on the live price every minute, as if the "
+        st.caption("**Live now** is provisional: the models re-run on the live price every 15 seconds, as if the "
                    "forming candle closed now. Alerts and advice use the confirmed signals.")
         st.caption("Estimates with a small edge, not advice. Size positions so being wrong is affordable.")
 
@@ -1625,14 +1653,10 @@ def page_altcoins():
     alt_chart_section(r)
 
     st.subheader("AI reading")
-    per_row = 3
-    for i in range(0, len(r), per_row):
-        cols = st.columns(per_row, gap="medium")
-        for col, row in zip(cols, r.iloc[i:i + per_row].itertuples()):
-            with col.container(border=True):
-                alt_card(row)
+    alt_reading_grid(r)
     st.caption("The AI here is the live model trained on BTC, ETH, BNB and SOL, applied to each altcoin as is. "
-               "Updated at every 4h close.")
+               "The bars are the reading at the last 4h close; **live now** re-runs it on the live price every "
+               "minute, as if the forming candle closed now (provisional).")
     st.subheader("Biggest movers on Binance")
     alt_scan_table()
 
@@ -1829,8 +1853,24 @@ def alt_price_header(sym):
         head.markdown(f":gray[{label}]  \n**{value}**", width="content")
 
 
-def alt_card(row):
-    """One altcoin's trend status, AI P(up) and drop risk."""
+@st.fragment(run_every=30)
+def alt_reading_grid(r):
+    """The altcoin cards; re-reads the live readings (the service refreshes them every minute)."""
+    live = preview.load(preview.ALT_PREVIEW)
+    if live and preview.age_seconds(live) > 3 * 60:
+        live = None
+    per_row = 3
+    for i in range(0, len(r), per_row):
+        cols = st.columns(per_row, gap="medium")
+        for col, row in zip(cols, r.iloc[i:i + per_row].itertuples()):
+            with col.container(border=True):
+                alt_card(row, live)
+    if live:
+        st.caption(f":material/update: Live readings from {preview.age_seconds(live):.0f} s ago.")
+
+
+def alt_card(row, live=None):
+    """One altcoin's trend status, AI P(up) and drop risk; with `live`, the live reading next to each bar."""
     st.markdown(f"#### {coin(row.symbol)}")
     st.caption(f"Last 4h close ${row.price:,.4g} · candle of {when(row.candle)}")
     line = st.container(horizontal=True, vertical_alignment="center", gap="small")
@@ -1840,10 +1880,13 @@ def alt_card(row):
     else:
         line.badge("Cash", icon=":material/trending_down:", color="red")
     st.caption(f"Daily close {row.from_50d:+.1%} vs its 50-day average.")
-    if pd.notna(row.p_up_1d):
-        st.progress(float(row.p_up_1d), text=f"AI: P(up, next 1 day) {row.p_up_1d:.0%}")
-    if pd.notna(row.p_up_3d):
-        st.progress(float(row.p_up_3d), text=f"AI: P(up, next 3 days) {row.p_up_3d:.0%}")
+    models = (live or {}).get("models", {})
+    for p, name, label in ((row.p_up_1d, "4h", "next 1 day"), (row.p_up_3d, "1d", "next 3 days")):
+        if pd.isna(p):
+            continue
+        now = models.get(name, {}).get(row.symbol)
+        extra = f" · live now {now['prob_up']:.0%}" if now else ""
+        st.progress(float(p), text=f"AI: P(up, {label}) {p:.0%}{extra}")
     if pd.notna(row.p_drop):
         st.progress(min(float(row.p_drop), 1.0),
                     text=f"Drop risk, 3 days {row.p_drop:.0%} ({droprisk.level(row.p_drop)})")
@@ -2479,47 +2522,161 @@ def page_stock_paper():
     stock_paper_dashboard()
 
 
-@st.fragment(run_every=30)
-def stock_paper_dashboard():
-    acct = stockpaper.load()
+STOCK_ACCOUNT_RULES = {
+    "buylist": "An equal share of every stock above its 200-day average, rebalanced at each month's last US close "
+               "(the tested rule behind Stock signals → Buy for hold now).",
+    "hold": "Every stock (ETFs excluded) bought in equal shares on day 1 and never sold. A benchmark.",
+    "index": "All the money in QQQ (the Nasdaq-100 ETF) on day 1, never sold. A benchmark.",
+    "dca": "The same stocks as Hold all, bought a quarter of the money at a time, one step a week for 4 weeks.",
+    "trend200": "Each stock held only while it closes above its 200-day average (did not beat holding in testing).",
+    "ai_gate": "Each stock held unless the stock AI's chance of a rise over 5 days is below 45% (did not beat "
+               "holding in testing).",
+}
+
+
+def _stock_paper_prices(acct):
+    """Live Binance prices for every stock the trial uses; any missing one falls back to its last close."""
     try:
         prices = {t: p[0] for t, p in get_stock_prices().items()}
     except Exception:
-        st.warning("Could not reach Binance for prices.")
-        return
-    v = stockpaper.value(acct, prices)
+        prices = {}
+    needed = {t for a in acct["accounts"].values() for t, q in a["qty"].items() if q > 0}
+    missing = sorted(t for t in needed if prices.get(t) is None)
+    for t in missing:
+        try:
+            prices[t] = float(stocks.history(t).iloc[-1])
+        except Exception:
+            prices[t] = 0.0
+    return prices, missing
+
+
+def _account_rows(acct, prices, v, t):
+    """One row per account for the leaderboard."""
     start, names = acct["start_cash"], acct["names"]
-    st.caption(f"Trial: {local(acct['opened']):%b %d, %H:%M} → {when(acct['ends'])}. Decisions at the US close "
-               "(16:00 New York), filled at that moment's Binance stock-futures price. Nothing real is traded.")
-    cards = st.container(horizontal=True, gap="medium")
-    for k in sorted(v, key=lambda k: -v[k]):
-        cards.metric(names[k], f"${v[k]:,.2f}", f"{v[k] - start:+,.2f} ({v[k] / start - 1:+.2%})", border=True)
+    rows = []
+    for k, a in acct["accounts"].items():
+        unreal = sum(q * prices.get(tk, 0.0) - a["cost"].get(tk, 0.0) for tk, q in a["qty"].items() if q > 0)
+        mine = t[t["account"] == k] if len(t) else t
+        held = sum(1 for q in a["qty"].values() if q > 0)
+        rows.append({"key": k, "Account": names[k], "Value": v[k], "Total P&L": v[k] - start,
+                     "Return": v[k] / start - 1, "vs QQQ": v[k] / start - v["index"] / start,
+                     "Realised": v[k] - start - unreal, "Unrealised": unreal,
+                     "Fees paid": float(mine["fee"].sum()) if len(mine) else 0.0, "Trades": len(mine),
+                     "Stocks held": held, "Invested now": 1 - a["cash"] / v[k] if v[k] else 0.0})
+    df = pd.DataFrame(rows).sort_values("Value", ascending=False).reset_index(drop=True)
+    df.insert(0, "#", range(1, len(df) + 1))
+    return df
+
+
+@st.fragment(run_every=30)
+def stock_paper_dashboard():
+    acct = stockpaper.load()
+    names, start = acct["names"], acct["start_cash"]
+    prices, missing = _stock_paper_prices(acct)
+    v = stockpaper.value(acct, prices)
+    t = stockpaper.trades()
+    now = pd.Timestamp.now(tz="UTC")
+    opened, ends = pd.Timestamp(acct["opened"]), pd.Timestamp(acct["ends"])
+    board = _account_rows(acct, prices, v, t)
+
+    # Where the trial stands
+    with st.container(border=True):
+        done = float(min(max((now - opened) / (ends - opened), 0.0), 1.0))
+        day, days = min((now - opened).days + 1, (ends - opened).days), (ends - opened).days
+        head = st.container(horizontal=True, vertical_alignment="center", gap="small")
+        if stockpaper.active(acct):
+            head.badge("Running", icon=":material/play_circle:", color="green")
+            head.markdown(f"**Day {day} of {days}** · ends {when(ends)}", width="content")
+        else:
+            head.badge("Finished", icon=":material/flag:", color="gray")
+            head.markdown(f"**Ended {when(ends)}**", width="content")
+        st.progress(done)
+        nxt = stocks.next_us_close()
+        st.caption(f":material/schedule: Next decision at the US close: **{when(nxt.tz_convert('UTC'), '%a %b %d, %H:%M')}** "
+                   f"({nxt:%H:%M} New York). Trades fill at that moment's Binance stock price. Nothing real is "
+                   "traded." + (f" No live price for {', '.join(missing)}: using the last close." if missing else ""))
+
+    # Who is ahead, in plain words
+    best = board.iloc[0]
+    ret = dict(zip(board["key"], board["Return"]))
+    tone = st.success if best["Return"] > 0 else st.info
+    tone(f"**{best['Account']}** is ahead at **{best['Return']:+.2%}** (${best['Value']:,.2f}). For comparison: "
+         f"QQQ {ret['index']:+.2%}, holding all stocks {ret['hold']:+.2%}.", icon=":material/emoji_events:")
+    st.caption(f"After {max((now - opened).days, 0)} days, gaps of a few percent are mostly luck; judge the accounts at "
+               "the end of the trial, and remember that 4 weeks is short (the rules were tested on 10 years).")
+
+    # Leaderboard
+    st.subheader("All accounts")
+    signed = ["Total P&L", "Realised", "Unrealised"]
+    shown = board.drop(columns="key")
+    table(shown.style.format({"Value": "${:,.2f}", **{c: "{:+,.2f}" for c in signed}, "Return": "{:+.2%}",
+                              "vs QQQ": "{:+.2%}", "Fees paid": "${:,.2f}"})
+          .map(lambda x: f"color: {UP}" if isinstance(x, float) and x > 0.00005 else
+               f"color: {DOWN}" if isinstance(x, float) and x < -0.00005 else "",
+               subset=[*signed, "Return", "vs QQQ"]),
+          hide_index=True, width="stretch", alt="Every stock paper account, best first",
+          column_config={"#": st.column_config.NumberColumn(width="small", help="Rank by value now, best first."),
+                         "Invested now": st.column_config.ProgressColumn(
+                             format="percent", min_value=0, max_value=1,
+                             help="Share of the account in stocks rather than cash.")})
+
+    # Return over time
     hist = stockpaper.balance_history()
     if len(hist) > 1:
-        h = hist.set_index(local(hist["time"]).dt.tz_localize(None))[list(names)].rename(columns=names)
-        st.line_chart(h, height=300, y_label="Balance (USD)", x_label="", alt="Balance of every stock paper account")
-    with st.expander("What each account does", icon=":material/info:"):
-        st.markdown(
-            "- **Buy-for-hold list (monthly)**: an equal share of every stock above its 200-day average, rebalanced "
-            "at each month's last US close (the tested rule on Stock signals).\n"
-            "- **Hold all**: every stock (ETFs excluded) bought equally at the start, never sold.\n"
-            "- **Nasdaq-100 ETF**: all in QQQ, never sold.\n"
-            "- **Buy in 4 weekly steps**: the same stocks, bought a quarter at a time each week.\n"
-            "- **200-day trend rule**: each stock held only while above its 200-day average (did not beat holding "
-            "in testing).\n"
-            "- **AI risk filter**: each stock held unless the stock AI's P(up, 5 days) is below 45% (did not beat "
-            "holding in testing).")
-    t = stockpaper.trades().iloc[::-1]
-    if len(t):
-        st.subheader("Trade history")
-        table(pd.DataFrame({f"Time ({tz_label()})": local(t["time"]).dt.strftime("%b %d, %H:%M"),
-                                   "Account": t["account"].map(names), "Stock": t["symbol"], "Side": t["side"],
-                                   "Price": t["price"], "Total (USD)": t["total"], "Reason": t["reason"]})
-                     .style.map(lambda x: f"color: {UP}; font-weight: 600" if x == "BUY" else
-                                f"color: {DOWN}; font-weight: 600" if x == "SELL" else "", subset=["Side"]),
-                     hide_index=True, width="stretch", alt="Stock paper trades",
-                     column_config={"Price": st.column_config.NumberColumn(format="dollar"),
-                                    "Total (USD)": st.column_config.NumberColumn(format="dollar")})
+        st.subheader("Return over time")
+        cols = [k for k in names if k in hist]
+        h = (hist.set_index(local(hist["time"]).dt.tz_localize(None))[cols] / start - 1) * 100
+        st.line_chart(h.rename(columns=names), height=300, y_label="Return (%)", x_label="",
+                      alt="Return of every stock paper account over time")
+
+    # One account in detail
+    st.subheader("Inside an account")
+    which = st.segmented_control("Account", list(names), default=board.iloc[0]["key"], format_func=names.get,
+                                 key="stock_paper_account") or board.iloc[0]["key"]
+    st.caption(STOCK_ACCOUNT_RULES.get(which, ""))
+    a = acct["accounts"][which]
+    rows = []
+    for tk, q in sorted(a["qty"].items()):
+        if q <= 0:
+            continue
+        px, cost = prices.get(tk, 0.0), a["cost"].get(tk, 0.0)
+        rows.append({"Stock": tk, "Shares": q, "Avg cost": cost / q, "Price": px, "Value": q * px,
+                     "P&L": q * px - cost, "P&L %": q * px / cost - 1 if cost else 0.0, "Share": q * px / v[which]})
+    kpis = st.container(horizontal=True, gap="medium")
+    kpis.metric("Value", f"${v[which]:,.2f}", f"{v[which] - start:+,.2f} ({v[which] / start - 1:+.2%})", border=True)
+    kpis.metric("Cash", f"${a['cash']:,.2f}", border=True,
+                help="Money not in any stock: waiting for a buy step, or held while stocks are below their line.")
+    kpis.metric("Stocks held", len(rows), border=True)
+    if rows:
+        hold = pd.DataFrame(rows).sort_values("Value", ascending=False)
+        table(hold.style.format({"Avg cost": "${:,.2f}", "Price": "${:,.2f}", "Value": "${:,.2f}",
+                                 "P&L": "{:+,.2f}", "P&L %": "{:+.2%}", "Shares": "{:.4f}"})
+              .map(lambda x: f"color: {UP}" if isinstance(x, float) and x > 0.00005 else
+                   f"color: {DOWN}" if isinstance(x, float) and x < -0.00005 else "", subset=["P&L", "P&L %"]),
+              hide_index=True, width="stretch", alt=f"Stocks held by {names[which]}",
+              column_config={"Share": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1,
+                                                                      help="Share of this account in this stock."),
+                             "Shares": st.column_config.Column(help="Shares held (fractional)."),
+                             "Avg cost": st.column_config.Column(help="Average price paid per share, including "
+                                                                      "fees.")})
+    else:
+        st.caption("Holds only cash right now.")
+    mine = t[t["account"] == which].iloc[::-1] if len(t) else t
+    if len(mine):
+        with st.expander(f"Trades of this account ({len(mine)})", icon=":material/receipt_long:"):
+            prefix = f"{which}: "
+            table(pd.DataFrame({f"Time ({tz_label()})": local(mine["time"]).dt.strftime("%b %d, %H:%M"),
+                                "Side": mine["side"], "Stock": mine["symbol"], "Shares": mine["quantity"],
+                                "Price": mine["price"], "Total (USD)": mine["total"], "Fee": mine["fee"],
+                                "Reason": mine["reason"].str.removeprefix(prefix)})
+                  .style.map(lambda x: f"color: {UP}; font-weight: 600" if x == "BUY" else
+                             f"color: {DOWN}; font-weight: 600" if x == "SELL" else "", subset=["Side"]),
+                  hide_index=True, width="stretch", alt=f"Trades of {names[which]}",
+                  column_config={"Price": st.column_config.NumberColumn(format="dollar"),
+                                 "Total (USD)": st.column_config.NumberColumn(format="dollar"),
+                                 "Fee": st.column_config.NumberColumn(format="dollar"),
+                                 "Shares": st.column_config.NumberColumn(format="%.4f", help="Shares bought or "
+                                                                         "sold in this trade.")})
 
 
 def page_strategy_lab():

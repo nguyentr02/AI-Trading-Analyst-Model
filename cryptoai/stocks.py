@@ -369,6 +369,15 @@ def us_close_hour(day):
     return 13 if day in early else 16
 
 
+def next_us_close(now=None):
+    """The next US market close that hasn't happened yet, as a New York Timestamp."""
+    now = now or pd.Timestamp.now(tz="America/New_York")
+    day = now.date()
+    while not (us_market_open(day) and (day > now.date() or now.hour < us_close_hour(day))):
+        day += timedelta(days=1)
+    return pd.Timestamp(day, tz="America/New_York") + pd.Timedelta(hours=us_close_hour(day))
+
+
 def last_us_close_day(now=None):
     """The date (New York) of the most recent US market close that has already happened."""
     now = now or pd.Timestamp.now(tz="America/New_York")

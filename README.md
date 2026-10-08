@@ -140,7 +140,7 @@ offline again, run the setup command from step 2 without `-Online`.
 | **US stocks → Stock signals** | The **AI verdict** (buy in steps, or don't buy now when no stock is in an uptrend) and what to sell or trim in your stocks; the **AI's top pick** with its daily check and a news warning; each stock's **news mood** over 24 hours with its latest headline; **Buy for hold now**: the tested list (an equal share of every stock above its 200-day average, reviewed monthly) on live prices; the **US market crash monitor**; and each stock's trend and the stock AI's 5-day chance of a rise |
 | **US stocks → Stock backtest** | Any stock: holding vs a 50/100/200-day trend rule over 10 years, and how trading on the stock AI did |
 | **US stocks → Stock portfolio** | Enter your stocks and spare cash for hold-first advice: flags one stock above 25% of your stock money, notes trend and worst historical fall, and plans cash in 4 weekly steps |
-| **US stocks → Stock paper trading** | A 4-week trial: hold all, all in QQQ, buy in 4 weekly steps, the 200-day rule and the AI risk filter, at Binance stock prices |
+| **US stocks → Stock paper trading** | A 4-week trial of six accounts (the buy-for-hold list, hold all, all in QQQ, buy in 4 weekly steps, the 200-day rule, the AI risk filter) at Binance stock prices: which one is ahead and by how much vs QQQ, when the next decision is (in your time zone), a table of all accounts, return over time, and each account's stocks, profit and trades |
 | **Research → Patterns the AI learnt** | Which kinds of patterns the AI relies on (trend, momentum, Bitcoin's moves, ...), and what each one shows: how often the AI expected a rise vs how often the price really rose, on data it never trained on. Refreshed daily |
 | **Research → Strategy lab** | Every idea tested so far, with its result on data it wasn't chosen on, and whether it was adopted |
 
@@ -159,8 +159,9 @@ Use the **Prediction** switch (Next 4 hours, Next 1 day, Next 3 days) at the top
 - New "next 4 hours" and "next 1 day" signals are ready about 3 minutes after each 4h candle closes:
   00:00, 04:00, 08:00, 12:00, 16:00 and 20:00 UTC (07:00, 11:00, 15:00, 19:00, 23:00, 03:00 in Vietnam, UTC+7).
   The "next 3 days" signal updates once a day, shortly after 00:00 UTC.
-- The Signals page refreshes itself every minute, so you don't need to reload.
-- **Live now** (under each signal) is a provisional reading, updated every minute: the models re-run on the
+- The Signals page refreshes itself every 15 seconds, so you don't need to reload.
+- **Live now** (under each signal) is a provisional reading, updated every 15 seconds (altcoins: every minute,
+  shown on their cards too): the models re-run on the
   live Binance price as if the candle still forming closed now. It shows where the signal is heading before
   the candle closes. The confirmed signal, the alerts and the portfolio advice still update at candle closes.
 

@@ -54,6 +54,7 @@ class LiveService:
         self.status = {"started": _now(), "state": "starting"}
         self._saved_at = 0.0
         self._next_preview = 0.0  # due immediately
+        self._next_minute = 0.0
         self._preview_failing = False
         self._paper_hour = None
 
@@ -184,12 +185,25 @@ class LiveService:
                 log(f"{tf} catch-up failed:\n{traceback.format_exc()}")
 
     def refresh_preview(self):
-        """Re-run the models on the live price (provisional signals, see preview.py). Never stops the service."""
-        self._next_preview = time.time() + config.PREVIEW_EVERY
+        """Every SIGNAL_EVERY seconds: re-run the models on the live price for the top coins (provisional signals,
+        see preview.py). Every PREVIEW_EVERY seconds also: the altcoin readings, the paper AI's live step (it counts
+        one reading a minute, so its 10-minute rule keeps its meaning) and the minute jobs. Never stops the service."""
+        start = time.time()
+        self._next_preview = start + config.SIGNAL_EVERY
         try:
             live_now = preview.compute()
             self.status["last_preview"] = _now()
-            for book in paper.BOOKS:  # the paper AI may trade at any moment, at that moment's price
+            self._preview_failing = False
+        except Exception as e:
+            if not self._preview_failing:  # log the first failure of a run of them, not one per minute
+                log(f"live preview failed ({type(e).__name__}: {e}); will keep trying")
+            self._preview_failing = True
+            live_now = None
+        if start < self._next_minute:
+            return
+        self._next_minute = start + config.PREVIEW_EVERY
+        try:
+            for book in paper.BOOKS if live_now is not None else ():  # the paper AI may trade at any moment
                 if not paper.is_open(book):
                     continue
                 readings = live_now if book is paper.MAIN else preview.compute(
@@ -201,11 +215,8 @@ class LiveService:
                 for r in done.itertuples() if len(done) else []:
                     log(f"    {tag} (live): {r.side} {r.symbol} {r.quantity:.6f} at {r.price:,.4f} "
                         f"(${r.total:,.2f}) - {r.reason}")
-            self._preview_failing = False
-        except Exception as e:
-            if not self._preview_failing:  # log the first failure of a run of them, not one per minute
-                log(f"live preview failed ({type(e).__name__}: {e}); will keep trying every minute")
-            self._preview_failing = True
+        except Exception:
+            self._log_once("paper live step", traceback.format_exc())
         # Each job below has its own error handling, so a failed preview never skips them.
         for job in (self.stock_close, self.market_crash_check, self.grid_check):
             try:

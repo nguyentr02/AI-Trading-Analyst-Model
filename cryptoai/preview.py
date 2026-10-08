@@ -80,12 +80,13 @@ def compute(extra=(), path=None, rank_exclude=()):
     return out
 
 
-def load():
-    """The latest saved preview, or None."""
-    if not config.LIVE_PREVIEW.exists():
+def load(path=None):
+    """The latest saved preview (top coins, or the altcoins with path=ALT_PREVIEW), or None."""
+    path = path or config.LIVE_PREVIEW
+    if not path.exists():
         return None
     try:
-        return json.loads(config.LIVE_PREVIEW.read_text())
+        return json.loads(path.read_text())
     except (OSError, ValueError):
         return None
 
