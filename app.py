@@ -155,7 +155,14 @@ COLUMN_HELP = {
     "Pair": "The Binance trading pair.",
     "Stock": "The stock or ETF this row is about.",
     "Price": "Last traded price.",
-    "Price (Binance)": "Last price of the stock's perpetual futures on Binance (trades 24/7).",
+    "Price (US)": "The real US market price, as on Google or Yahoo: live while the US market is open, else the "
+                  "last close.",
+    "Day change": "Change in the latest US session (today's while the market is open) vs the session before.",
+    "Pre/after hours": "The latest pre-market or after-hours trade, vs the US price. Empty when there is none.",
+    "Binance 24/7": "Last price of the stock's futures on Binance, which trade 24/7. While the US market is closed "
+                    "it can be 1-3% away from the US price; at the US close they match to about 0.1%.",
+    "On Binance now": "What Binance's 24/7 stock trading costs right now. While the US market is closed it can be "
+                      "1-3% away from the US price.",
     "1h": "Price change over the last hour.",
     "24h": "Price change over the last 24 hours.",
     "7d": "Price change over the last 7 days.",
@@ -264,7 +271,7 @@ COLUMN_HELP = {
     "Fee per trade": "The exchange fee assumed per buy or sell (Binance's is 0.1%).",
     # buy for hold
     "Do now": "BUY: in the tested buy-for-hold list (above its 200-day average). AVOID for now: below it.",
-    "Price now": "Live Binance price (stock perpetual futures).",
+    "Price now": "The US market price: live while the US market is open, else the last close.",
     "Invest": "Your budget split equally across the stocks marked BUY.",
     "Shares": "Shares that amount buys at the price now (fractional).",
     "Each weekly step": "Buy a quarter of it each week for 4 weeks, instead of all at once.",
@@ -2004,9 +2011,59 @@ def get_momentum_test(version=None):
     return stocks.momentum_test()
 
 
-@st.cache_data(ttl=10, show_spinner=False)
-def get_stock_prices():
+@st.cache_data(ttl=60, show_spinner=False)
+def get_us_quotes():
+    """Real US market prices (Yahoo), refreshed every minute; see stocks.us_quotes."""
+    return stocks.us_quotes()
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def get_binance_stock_prices():
+    """Binance stock futures (24/7): {ticker: (price, 24h change, 24h volume)}."""
     return stocks.live_prices()
+
+
+def get_stock_prices():
+    """{ticker: (price, change today, Binance 24h volume)} using the real US market price, as Google or Yahoo show
+    it (live while the US market is open, else the last close). Binance's 24/7 price is the fallback for any stock
+    Yahoo doesn't answer for."""
+    try:
+        us = get_us_quotes()
+    except Exception:
+        us = {}
+    try:
+        bn = get_binance_stock_prices()
+    except Exception:
+        bn = {}
+    if not us and not bn:
+        raise RuntimeError("no stock prices from Yahoo or Binance right now")
+    out = {}
+    for t in stocks.STOCKS:
+        b = bn.get(t)
+        if t in us:
+            out[t] = (us[t]["price"], us[t]["change"], b[2] if b else 0.0)
+        elif b:
+            out[t] = b
+    return out
+
+
+def us_market_line():
+    """One line saying whether the US market is open and what the prices on the page are."""
+    try:
+        q = get_us_quotes().get("SPY")
+    except Exception:
+        q = None
+    if not q:
+        st.caption(":material/cloud_off: No US market prices right now; showing Binance's 24/7 prices.")
+        return
+    nxt = stocks.next_us_open().tz_convert("UTC")
+    text = {"open": ":green[**US market open**]: prices are live.",
+            "pre-market": f"**Pre-market**: prices are the last close; the US market opens {when(nxt, '%a %H:%M')}.",
+            "after-hours": "**After hours**: prices are today's close.",
+            "closed": f"**US market closed**: prices are the close of {pd.Timestamp(q['day']):%a %b %d} (New York); "
+                      f"it opens {when(nxt, '%a %H:%M')}."}[q["session"]]
+    st.caption(f":material/schedule: {text} Binance's stock tokens and futures trade 24/7, so while the US market "
+               "is closed their price can be 1-3% away from it (at the US close they match to about 0.1%).")
 
 
 def _pick_stock():
@@ -2017,9 +2074,10 @@ def _pick_stock():
 
 def page_stocks():
     st.title("US stocks")
-    st.caption("Live prices and charts from Binance's stock perpetual futures (24/7, the most traded way to hold US "
-               "stocks on Binance; tokenized spot pairs like NVDAB/USDT also exist). Binance's stock history is only "
-               "months long, so the hold-vs-trade tests below use 10 years of daily closes from Yahoo Finance.")
+    st.caption("Prices are the real US market price (as on Google or Yahoo). Charts and the Binance column are "
+               "Binance's stock futures, which trade 24/7. Binance's stock history is only months long, so the "
+               "hold-vs-trade tests below use 10 years of daily closes from Yahoo Finance.")
+    us_market_line()
     try:
         a = get_stock_analysis(stock_data_version())
     except Exception as e:
@@ -2030,11 +2088,19 @@ def page_stocks():
         live = get_stock_prices()
     except Exception:
         live = {}
+    try:
+        quotes = get_us_quotes()
+    except Exception:
+        quotes = {}
+    try:
+        bn = get_binance_stock_prices()
+    except Exception:
+        bn = {}
 
     pick = st.selectbox("Stock chart", list(a["ticker"]), index=None, key="stock_pick",
                         format_func=lambda t: f"{t} · {stocks.STOCKS[t]}", placeholder="Select a stock to see its chart")
     if pick:
-        stock_detail(a.set_index("ticker").loc[pick], live.get(pick))
+        stock_detail(a.set_index("ticker").loc[pick], quotes.get(pick), bn.get(pick))
 
     st.subheader("Hold or trade?")
     beats = int(a["rule_beats_hold"].sum())
@@ -2043,8 +2109,11 @@ def page_stocks():
                 "unlike crypto, holding has been better.")
     tbl = pd.DataFrame({
         "Stock": a["ticker"] + " · " + a["name"],
-        "Price (Binance)": [live.get(t, (np.nan,))[0] for t in a["ticker"]],
-        "24h": [live.get(t, (np.nan, np.nan))[1] for t in a["ticker"]],
+        "Price (US)": [live.get(t, (np.nan,))[0] for t in a["ticker"]],
+        "Day change": [live.get(t, (np.nan, np.nan))[1] for t in a["ticker"]],
+        "Pre/after hours": [quotes[t]["extended"] / quotes[t]["price"] - 1
+                            if t in quotes and quotes[t]["extended"] else np.nan for t in a["ticker"]],
+        "Binance 24/7": [bn.get(t, (np.nan,))[0] for t in a["ticker"]],
         "1 year": a["1y"], "From 1y high": a["from_high"],
         "Trend": np.where(a["above_200d"], "▲ above 200-day", "▼ below 200-day"),
         "Typical yearly swing": a["vol"], "Worst fall (10y)": a["worst_10y"],
@@ -2052,12 +2121,13 @@ def page_stocks():
             [r[f"{r['rule']}_check_sharpe"] if r["rule"] else np.nan for _, r in a.iterrows()],
     })
     st.session_state["_stock_order"] = list(a["ticker"])
-    pct = ["24h", "1 year", "From 1y high", "Worst fall (10y)"]
+    pct = ["Day change", "Pre/after hours", "1 year", "From 1y high", "Worst fall (10y)"]
     table(
-        tbl.style.format({**{c: "{:+.1%}" for c in pct}, "Typical yearly swing": "{:.0%}", "Price (Binance)": "${:,.2f}",
+        tbl.style.format({**{c: "{:+.1%}" for c in pct}, "Typical yearly swing": "{:.0%}", "Price (US)": "${:,.2f}",
+                          "Binance 24/7": "${:,.2f}",
                             "Hold, Sharpe 2023-26": "{:.2f}", "Best rule, Sharpe 2023-26": "{:.2f}"}, na_rep="–")
         .map(lambda x: f"color: {UP}" if isinstance(x, float) and x > 0 else
-             f"color: {DOWN}" if isinstance(x, float) and x < 0 else "", subset=["24h", "1 year"])
+             f"color: {DOWN}" if isinstance(x, float) and x < 0 else "", subset=["Day change", "Pre/after hours", "1 year"])
         .map(lambda x: f"color: {UP}" if str(x).startswith("▲") else f"color: {DOWN}", subset=["Trend"]),
         hide_index=True, width="stretch", alt="US stocks on Binance: price, trend, risk, hold vs trade",
         on_select=_pick_stock, selection_mode="single-row", key="stock_table")
@@ -2075,8 +2145,8 @@ def page_stocks():
                    f"unit of risk. Strongest now: {', '.join(m['top_now'])}.")
 
 
-def stock_detail(row, live):
-    """Chart from Binance and the hold/trade view for one stock."""
+def stock_detail(row, quote, binance):
+    """Chart from Binance and the hold/trade view for one stock; the US market price and Binance's 24/7 price."""
     sym = stocks.perp(row.name)
     bar = st.container(horizontal=True, vertical_alignment="bottom", gap="medium")
     interval = bar.segmented_control("Interval", list(CHART_INTERVALS), key="stock_chart_interval", required=True)
@@ -2085,10 +2155,21 @@ def stock_detail(row, live):
     main, side = st.columns([3.3, 1], gap="medium")
     with main:
         head = st.container(horizontal=True, vertical_alignment="center", gap="large")
-        if live:
-            head.metric(f"{row.name} / USDT (Binance)", f"${live[0]:,.2f}", f"{live[1]:+.2%} 24h", width="content")
-            head.markdown(f":gray[24h volume]  \n**{usd(live[2])}**", width="content")
-        head.markdown(f":gray[Last US close]  \n**${row.close:,.2f}**", width="content")
+        if quote:
+            label = {"open": "live", "pre-market": "last close", "after-hours": "today's close",
+                     "closed": "last close"}[quote["session"]]
+            session_day = "today" if quote["session"] == "open" else f"on {pd.Timestamp(quote['day']):%b %d}"
+            head.metric(f"{row.name} · US market ({label})", f"${quote['price']:,.2f}",
+                        f"{quote['change']:+.2%} {session_day}", width="content")
+            if quote["extended"]:
+                head.markdown(f":gray[{quote['extended_label'].capitalize()}]  \n**${quote['extended']:,.2f}** "
+                              f":gray[({quote['extended'] / quote['price'] - 1:+.2%})]", width="content")
+        else:
+            head.markdown(f":gray[Last US close]  \n**${row.close:,.2f}**", width="content")
+        if binance:
+            gap = f" :gray[({binance[0] / quote['price'] - 1:+.2%} vs US)]" if quote else ""
+            head.markdown(f":gray[Binance 24/7]  \n**${binance[0]:,.2f}**{gap}", width="content")
+            head.markdown(f":gray[Binance 24h volume]  \n**{usd(binance[2])}**", width="content")
         price_chart(sym, interval, tuple(shown))
     with side:
         st.subheader("Hold view", icon=":material/savings:")
@@ -2112,6 +2193,7 @@ def stock_detail(row, live):
 
 def page_stock_signals():
     st.title("Stock signals")
+    us_market_line()
     try:
         stock_analysis()
     except Exception as e:
@@ -2125,8 +2207,8 @@ def page_stock_signals():
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_stock_live_ai(prices, version):
-    return stockai.live_readings(dict(prices))
+def get_stock_live_ai(prices, version, day=None):
+    return stockai.live_readings(dict(prices), day)
 
 
 @st.fragment(run_every=60)
@@ -2139,7 +2221,11 @@ def every_stock_table():
         live = {}
     prices = {t: v[0] for t, v in live.items()}
     try:
-        live_ai = get_stock_live_ai(tuple(sorted(prices.items())), stock_data_version()) if prices else {}
+        day = get_us_quotes().get("SPY", {}).get("day")
+    except Exception:
+        day = None
+    try:
+        live_ai = get_stock_live_ai(tuple(sorted(prices.items())), stock_data_version(), day) if prices else {}
     except Exception:
         live_ai = {}
     if ai is None:
@@ -2161,7 +2247,9 @@ def every_stock_table():
         t = r["ticker"]
         c = stocks.history(t)
         px = prices.get(t, float(c.iloc[-1]))
-        recent = pd.concat([c.tail(199), pd.Series([px])]) if t in prices else c.tail(200)
+        # today's price replaces today's close if Yahoo already has it, else it is added as a provisional close
+        past = c[c.index < pd.Timestamp(day, tz="UTC")] if day else c
+        recent = pd.concat([past.tail(199), pd.Series([px])]) if t in prices else c.tail(200)
         avg200, avg50 = recent.mean(), recent.tail(50).mean()
         rows.append({"Stock": f"{t} · {r['name']}", "Price now": px,
                      "Long-term trend": "▲ above 200-day" if px > avg200 else "▼ below 200-day", "vs 200-day": px / avg200 - 1,
@@ -2208,7 +2296,8 @@ def stock_stance(b):
         except Exception:
             pass
     try:
-        mkt = stocks.market_status(get_stock_prices()["SPY"][0])
+        spy = get_stock_prices()["SPY"]
+        mkt = stocks.market_status(spy[0], today=spy[1])
     except Exception:
         mkt = None
     if n == 0:
@@ -2328,16 +2417,21 @@ def stock_buy_list():
                     f"**{when(review)}**). Keep a stock while its price is above its **sell-if-below line** (its 200-day average, a floor "
                     "that rises with the stock; there is no take-profit target). If it is below the line at a monthly check, sell it, and buy whatever newly shows "
                     "BUY. Between checks, do nothing, even if it dips.")
+    try:
+        bn = get_binance_stock_prices()
+    except Exception:
+        bn = {}
     rows = []
     for _, r in b.iterrows():
         buy = bool(r["in"])
         rows.append({"Stock": f"{r['ticker']} · {r['name']}", "Do now": "BUY" if buy else "AVOID for now",
-                     "Price now": r["price"], "Invest": each if buy else 0.0,
+                     "Price now": r["price"], "On Binance now": bn.get(r["ticker"], (np.nan,))[0],
+                     "Invest": each if buy else 0.0,
                      "Shares": each / r["price"] if buy else 0.0, "Each weekly step": each / 4 if buy else 0.0,
                      "Sell if below (200-day avg)": r["avg200"], "Room above the sell-if-below line": r["from_200d"],
                      "Worst fall (10y)": r["worst_10y"]})
     df = pd.DataFrame(rows)
-    table(df.style.format({"Price now": "${:,.2f}", "Invest": "${:,.0f}", "Shares": "{:.3f}",
+    table(df.style.format({"Price now": "${:,.2f}", "On Binance now": "${:,.2f}", "Invest": "${:,.0f}", "Shares": "{:.3f}",
                            "Each weekly step": "${:,.0f}", "Sell if below (200-day avg)": "${:,.2f}",
                            "Room above the sell-if-below line": "{:+.1%}", "Worst fall (10y)": "{:.0%}"})
           .map(lambda x: f"color: {UP}; font-weight: 600" if x == "BUY" else
@@ -2345,7 +2439,8 @@ def stock_buy_list():
           .map(lambda x: f"color: {UP}" if isinstance(x, float) and x > 0 else
                f"color: {DOWN}" if isinstance(x, float) and x < 0 else "", subset=["Room above the sell-if-below line"]),
           hide_index=True, width="stretch", alt="Which stocks to buy now, how much, and their sell lines")
-    st.caption(f"Live Binance prices, refreshed every minute. Shares are fractional (Binance stock tokens and futures "
+    st.caption(f"Price now: the US market price (live while it is open, else the last close), refreshed every "
+               f"minute; On Binance now: what Binance's 24/7 stock trading costs right now. Shares are fractional (Binance stock tokens and futures "
                f"allow that). Why this rule: holding an equal share of every stock above its 200-day average, checked "
                f"monthly, beat holding all {len(b)} stocks in both test periods (Sharpe 0.83 vs 0.61 on 2016-2022, "
                f"2.05 vs 1.91 on 2023-2026) with a smaller worst fall (-46% vs -59%). A stock far above its sell line "
@@ -2382,7 +2477,8 @@ def stock_news():
 def market_monitor():
     """US market crash monitor: S&P 500 vs its high and 200-day average, live."""
     try:
-        s = stocks.market_status(get_stock_prices()["SPY"][0])
+        spy = get_stock_prices()["SPY"]
+        s = stocks.market_status(spy[0], today=spy[1])
     except Exception as e:
         st.caption(f"Market monitor unavailable: {e}")
         return
@@ -2446,6 +2542,7 @@ def page_stock_backtest():
 
 def page_stock_portfolio():
     st.title("Stock portfolio")
+    us_market_line()
     holdings, cash = stocks.load_portfolio()
     try:
         a = get_stock_analysis(stock_data_version())

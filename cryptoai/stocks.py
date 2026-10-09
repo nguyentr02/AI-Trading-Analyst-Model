@@ -10,6 +10,7 @@ better than a stock picked in advance would have. Hold-vs-trade on the SAME stoc
 of the hold returns is not.
 """
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from functools import lru_cache
 
@@ -80,6 +81,70 @@ def candles(ticker, max_age_hours=12):
 def history(ticker, max_age_hours=12):
     """Daily adjusted closes for up to 10 years."""
     return candles(ticker, max_age_hours)["close"]
+
+
+def _us_quote(ticker):
+    """One stock's real US market quote from Yahoo (see us_quotes), or None if Yahoo doesn't answer."""
+    res = None
+    for attempt in range(3):
+        try:
+            r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
+                             params={"range": "1d", "interval": "1m", "includePrePost": "true"},
+                             headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+            r.raise_for_status()
+            res = r.json()["chart"]["result"][0]
+            break
+        except (requests.RequestException, ValueError, KeyError, TypeError, IndexError):
+            time.sleep(1 + attempt)
+    if res is None:
+        return None
+    meta = res["meta"]
+    price = float(meta["regularMarketPrice"])
+    prev = float(meta.get("chartPreviousClose") or meta.get("previousClose") or price)
+    now = time.time()
+    session = "closed"  # overnight, weekends and holidays
+    for key, label in (("pre", "pre-market"), ("regular", "open"), ("post", "after-hours")):
+        p = (meta.get("currentTradingPeriod") or {}).get(key) or {}
+        if p.get("start", 0) <= now < p.get("end", 0):
+            session = label
+    # The latest pre-market or after-hours trade, judged against the regular session of the day the data is for.
+    periods = meta.get("tradingPeriods") or {}
+    reg = (periods.get("regular") or [[{}]])[0][0] or (meta.get("currentTradingPeriod") or {}).get("regular") or {}
+    extended = extended_label = None
+    closes = res["indicators"]["quote"][0].get("close") or []
+    for ts, c in zip(reversed(res.get("timestamp") or []), reversed(closes)):
+        if c is None:
+            continue
+        if ts >= reg.get("end", float("inf")):
+            extended, extended_label = float(c), "after-hours"
+        elif ts < reg.get("start", 0):
+            extended, extended_label = float(c), "pre-market"
+        break
+    at = pd.Timestamp(meta.get("regularMarketTime", now), unit="s", tz="UTC")
+    return {"price": price, "prev_close": prev, "change": price / prev - 1, "extended": extended,
+            "extended_label": extended_label, "session": session, "time": at,
+            "day": at.tz_convert("America/New_York").strftime("%Y-%m-%d")}
+
+
+def us_quotes(tickers=STOCKS):
+    """The real US market price of each stock, as Google or Yahoo show it: {ticker: {"price": the regular-session
+    price (live while the market is open, else the last close), "prev_close", "change" (vs the previous close),
+    "extended": the latest pre-market or after-hours price or None, "extended_label", "session": "open",
+    "pre-market", "after-hours" or "closed", "time" and "day" (New York date) of the regular price}}. Binance's
+    stock futures trade 24/7, so outside US hours their price can be 1-3% away from this (at the US close they
+    match to about 0.1%)."""
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        quotes = dict(zip(tickers, pool.map(_us_quote, tickers)))
+    return {t: q for t, q in quotes.items() if q}
+
+
+def next_us_open(now=None):
+    """The next start of the US regular session (09:30 New York), as a New York Timestamp."""
+    now = now or pd.Timestamp.now(tz="America/New_York")
+    day = now.date()
+    while not (us_market_open(day) and (day > now.date() or (now.hour, now.minute) < (9, 30))):
+        day += timedelta(days=1)
+    return pd.Timestamp(day, tz="America/New_York") + pd.Timedelta(hours=9, minutes=30)
 
 
 def live_prices(tickers=STOCKS):
@@ -395,7 +460,7 @@ CORRECTION, BEAR, SHARP_DAY = -0.10, -0.20, -0.04
 RECOVER_BAND = 0.01  # leave a correction / bear market only 1 point above its line
 
 
-def market_status(spy_live=None):
+def market_status(spy_live=None, today=None):
     """Where the US market (SPY) stands: vs its 1-year high, its 200-day average, and today's move."""
     c = history("SPY")
     ny = pd.Timestamp.now(tz="America/New_York")
@@ -405,6 +470,7 @@ def market_status(spy_live=None):
     high = max(float(c.tail(252).max()), px)
     avg200 = float(c.tail(200).mean())
     dd, day = px / high - 1, px / float(c.iloc[-1]) - 1 if spy_live else float(c.iloc[-1] / c.iloc[-2] - 1)
+    day = day if today is None else today
     level = "Bear market" if dd <= BEAR else "Correction" if dd <= CORRECTION else "Normal"
     return {"price": px, "from_high": dd, "high": high, "avg200": avg200, "above_200d": px > avg200,
             "close": float(c.iloc[-1]), "close_above_200d": float(c.iloc[-1]) > avg200, "today": day,

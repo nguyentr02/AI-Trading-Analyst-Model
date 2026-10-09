@@ -131,14 +131,17 @@ def train_and_test():
     return result
 
 
-def live_readings(prices):
-    """Provisional P(up, 5 days) per stock on the live price (Binance perpetual): today's daily candle is treated
-    as if it closed now (open = last close, close = live price), then the saved model reads it. Like the crypto
-    'Live now' readings: it shows where the signal is heading; the confirmed one updates at the US close."""
+def live_readings(prices, day=None):
+    """Provisional P(up, 5 days) per stock on the live price: today's daily candle is treated as if it closed now
+    (open = last close, close = live price), then the saved model reads it. Like the crypto 'Live now' readings:
+    it shows where the signal is heading; the confirmed one updates at the US close. `day` (New York date,
+    "YYYY-MM-DD") is the trading day the prices belong to; while the US market hasn't traded today yet, that is
+    the last session, so no new candle is added."""
     bundle = joblib.load(MODEL_FILE) if MODEL_FILE.exists() else None
     if bundle is None:
         return {}
-    today = pd.Timestamp.now(tz="America/New_York").normalize().tz_convert("UTC").normalize()
+    today = (pd.Timestamp(day, tz="UTC") if day else
+             pd.Timestamp.now(tz="America/New_York").normalize().tz_convert("UTC").normalize())
     raw = {}
     for t in stocks.STOCKS:
         c = stocks.candles(t).copy()
